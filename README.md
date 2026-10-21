@@ -18,6 +18,9 @@ A runnable sample of the AI patterns enterprises are adopting now. It's built on
 | 7 | MCP server + client | Acme Travel Desk (FX, time zones, holidays) | `@McpTool` / `@McpResource` / `@McpPrompt`, Streamable HTTP, MCP client tool discovery, works with Claude |
 | 8 | Observability | AI operations dashboard | Micrometer `gen_ai.*` observations, OpenTelemetry → Grafana LGTM, tokens and latency per feature, traces |
 | 9 | LLM evaluation | RAG quality gate in CI | Golden set, `RelevancyEvaluator`, `FactCheckingEvaluator`, JUnit gate (`-Pllm-eval`) |
+| 10 | Text-to-SQL | Plain-English questions over the helpdesk database | Schema from Postgres comments, structured output, JSqlParser guard, read-only transaction, self-repair |
+| 11 | Semantic caching | Reworded policy questions answered without a model call | Cache advisor, second pgvector table, measured similarity threshold, invalidation on ingest, hit-rate metrics |
+| 12 | Multi-agent with A2A | Helpdesk agent delegates a hardware purchase to the procurement team's agent | A2A agent card, `message/send`, task states incl. `input-required`, artifacts, A2A Java SDK, approval-gated delegation |
 
 👉 **[DEMO.md](DEMO.md)** is the click-by-click demo script, with the result to expect for each demo.
 📖 **[docs/CONCEPTS.md](docs/CONCEPTS.md)** explains each concept and what happens behind the scenes on a request. The same guide is in the demo UI at http://localhost:8080/concepts.html, and each demo page links to its section.
@@ -27,15 +30,19 @@ A runnable sample of the AI patterns enterprises are adopting now. It's built on
 ```mermaid
 flowchart TB
   UI["Browser UI<br/>static HTML, no build"] -->|REST / SSE| APP
-  APP["ai-app :8080 · Spring Boot 4 + Spring AI 2<br/>ChatClient + advisors · guardrails · RAG · tools<br/>agents · extraction · MCP client · evals"]
+  APP["ai-app :8080<br/>Spring Boot 4 + Spring AI 2<br/>advisors · guardrails · RAG<br/>tools · agents · extraction<br/>text-to-SQL · cache<br/>MCP + A2A clients"]
   APP -->|chat + embeddings| LLM["LM Studio :1234<br/>or hosted LLM"]
   APP -->|JDBC| PG[("Postgres<br/>+ pgvector")]
-  APP -->|MCP| MCPS["mcp-server :8081<br/>Travel Desk"]
   APP -->|OTLP| LGTM["otel-lgtm :3000<br/>Grafana"]
+  APP -->|MCP| MCPS["mcp-server :8081<br/>Travel Desk"]
+  APP -->|A2A| PA["procurement-agent :8082<br/>Procurement agent"]
+  PA -->|chat| LLM
+  MCPS ~~~ PA
+  PG ~~~ LGTM
   CLAUDE["Claude Desktop<br/>Claude Code"] -->|MCP| MCPS
 ```
 
-Postgres and Grafana LGTM are started automatically by Spring Boot's Docker Compose support ([ai-app/compose.yaml](ai-app/compose.yaml)) when ai-app starts.
+Postgres and Grafana LGTM are started automatically by Spring Boot's Docker Compose support ([ai-app/compose.yaml](ai-app/compose.yaml)) when ai-app starts. `mcp-server` and `procurement-agent` are separate apps on purpose: they stand for services owned by other teams.
 
 ## Prerequisites
 
@@ -67,13 +74,21 @@ Any tool-calling chat model works. Small models are noticeably weaker at multi-s
    ./mvnw -pl mcp-server spring-boot:run
    ```
 
-2. Start the main app (port 8080). It also starts Postgres and Grafana in Docker and loads the sample handbook:
+2. Start the procurement agent in its own terminal (port 8082), for demo 12:
+
+   ```bash
+   ./mvnw -pl procurement-agent spring-boot:run
+   ```
+
+3. Start the main app (port 8080). It also starts Postgres and Grafana in Docker and loads the sample handbook:
 
    ```bash
    ./mvnw -pl ai-app spring-boot:run
    ```
 
-3. Open **http://localhost:8080** for the demo UI, and **http://localhost:3000/d/acme-ai-overview** for the Grafana dashboard (login admin/admin).
+4. Open **http://localhost:8080** for the demo UI, and **http://localhost:3000/d/acme-ai-overview** for the Grafana dashboard (login admin/admin).
+
+ai-app starts without the other two; only demos 7 and 12 need them.
 
 On Windows PowerShell, use `.\mvnw.cmd` instead of `./mvnw`. The ready-made API calls for every demo are in [http/requests.http](http/requests.http), which runs in the IntelliJ or VS Code REST client.
 
@@ -87,13 +102,14 @@ OPENAI_API_KEY=sk-... OPENAI_CHAT_MODEL=<model-id> ./mvnw -pl ai-app spring-boot
 
 - **[application-openai.yml](ai-app/src/main/resources/application-openai.yml)** sets the base URL, the key, the models, and 1536-dimensional embeddings. It also turns off the local-model quirks.
 - **Any OpenAI-compatible endpoint works** (Azure OpenAI, Groq, vLLM, Ollama's `/v1`, …). Set `OPENAI_BASE_URL`, or override `LLM_BASE_URL`, `LLM_API_KEY`, `CHAT_MODEL` and `EMBEDDING_MODEL` with the default profile.
-- **Changing the embedding model changes the vector dimensions, so re-index once:** start once with `--spring.ai.vectorstore.pgvector.remove-existing-vector-store-table=true`, then call `POST /api/docs/samples?force=true` (the UI's "Reload sample handbook" button does the same).
+- **Changing the embedding model changes the vector dimensions, so re-index once:** start once with `--spring.ai.vectorstore.pgvector.remove-existing-vector-store-table=true`, then call `POST /api/docs/samples?force=true` (the UI's "Reload sample handbook" button does the same). Drop the `semantic_cache` table too, and re-measure the cache threshold for the new model (see [CONCEPTS.md §11](docs/CONCEPTS.md#11-semantic-caching)).
+- **procurement-agent** has the same `openai` profile.
 
 ## Tests
 
 | Command | What runs | Needs |
 |---|---|---|
-| `./mvnw verify` | **Unit tests:** guardrails, PII, injection rules, `@TotalsMatch`, model-quirks advisor, the human-in-the-loop flow and agent workflows (with a scripted `StubChatModel`), and the MCP tools. **Integration test:** Flyway seed, ingestion dedupe, category filters, PDF via Tika and JDBC chat memory on real pgvector, using deterministic fake embeddings. | Docker |
+| `./mvnw verify` | **Unit tests:** guardrails, PII, injection rules, `@TotalsMatch`, model-quirks advisor, the human-in-the-loop flow and agent workflows (with a scripted `StubChatModel`), the SQL guard, the cache advisor, the A2A client against a stub agent, the MCP tools, and the procurement agent's tools and A2A protocol. **Integration tests:** Flyway seed, ingestion dedupe, category filters, PDF via Tika, JDBC chat memory, text-to-SQL on the seed data (including the read-only transaction) and the semantic cache, on real pgvector with deterministic fake embeddings. | Docker |
 | `./mvnw verify -Pllm-eval` | **RAG quality gate** ([RagQualityGateIT](ai-app/src/test/java/com/acme/ai/evaluation/RagQualityGateIT.java)) against the real models. It prints a scorecard and fails below `acme.evaluation.min-pass-rate`. | Docker + LM Studio |
 | `./mvnw verify -Pllm-eval -Dacme.rag.top-k=1 -Dacme.rag.similarity-threshold=0.95` | The same gate with starved retrieval, to show it catching a regression. | Docker + LM Studio |
 
@@ -104,6 +120,7 @@ A 4B model is a noisy judge. The gate combines deterministic fact checks with LL
 ```
 pom.xml                         parent: Boot 4.1.1, Spring AI BOM 2.0.1, Java 25, llm-eval profile
 mcp-server/                     Acme Travel Desk MCP server (Streamable HTTP, port 8081)
+procurement-agent/              Acme procurement agent, reached over A2A (port 8082)
 ai-app/
   compose.yaml                  Postgres+pgvector, grafana/otel-lgtm (started by Spring Boot)
   observability/                provisioned Grafana dashboard "Acme AI Overview"
@@ -112,10 +129,11 @@ ai-app/
     chat/                       demo 1   guardrails/  demo 2   rag/          demo 3
     helpdesk/                   demo 4   agents/      demo 5   extraction/   demo 6
     mcp/                        demo 7   observability/ demo 8 evaluation/   demo 9
+    analytics/                  demo 10  cache/       demo 11  a2a/          demo 12
   src/main/resources/
     application.yml             local LM Studio defaults + acme.* demo knobs
     application-openai.yml      hosted provider profile
-    db/migration/               Flyway: chat memory, KB registry, helpdesk schema + seed
+    db/migration/               Flyway: chat memory, KB registry, helpdesk schema + seed, schema comments
     demo/handbook/              fictional Acme handbook (5 Markdown files + 1 PDF)
     eval/rag-golden.json        golden question set for demo 9
     static/                     UI (index.html, app.js, styles.css, samples.json) + concepts.html guide
@@ -137,6 +155,9 @@ DEMO.md                         demo script with expected results
 | `acme.extraction.max-retries` | `2` | Validation-feedback retries before flagging for review |
 | `acme.agents.evaluator-max-rounds` | `3` | Evaluator-optimizer loop limit |
 | `acme.evaluation.min-pass-rate` | `0.8` | RAG quality-gate threshold |
+| `acme.sql.allowed-tables` / `max-rows` / `timeout-seconds` | `employee, asset, ticket` / `200` / `3` | What text-to-SQL may read, and how much and how long |
+| `acme.cache.enabled` / `similarity-threshold` / `ttl` | `true` / `0.95` / `24h` | Semantic cache for the RAG demo; the threshold was measured for nomic-embed-text |
+| `acme.a2a.procurement-url` | `http://localhost:8082` | Where to find the procurement agent's card |
 
 ## Use the MCP server from Claude
 
@@ -158,6 +179,9 @@ For Claude Desktop, add it through the `mcp-remote` bridge in `claude_desktop_co
 |---|---|
 | HTTP 502 "LLM unavailable" | LM Studio's server is not running, or the model in `CHAT_MODEL` isn't loaded (`lms ps`). |
 | HTTP 503 in the MCP demo | Start `mcp-server` on port 8081. |
+| HTTP 503 in the A2A demo | Start `procurement-agent` on port 8082. |
+| Purchase requests are refused for budget | Budgets live in memory and the demo uses them up. Restart `procurement-agent` to reset them. |
+| JVM crashes with "insufficient memory" (`hs_err_pid*.log`) | When the model doesn't fit in VRAM, LM Studio keeps it in RAM. Give the apps smaller heaps, e.g. `-Dspring-boot.run.jvmArguments=-Xmx512m`, and stop `mcp-server` when you don't need it. |
 | App fails at startup on Docker | Start Docker Desktop. The Compose services need about 2 GB of images on first run. |
 | RAG says "not found" for everything | The handbook isn't ingested yet (the embedding model was down at startup). Click "Reload sample handbook". |
 | Slow answers | It's a local 4B model. The parallel and orchestrator demos benefit from LM Studio's parallel slots (`lms ps` shows PARALLEL). |

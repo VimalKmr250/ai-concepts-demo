@@ -141,6 +141,9 @@ const FEATURES = [
   { id: 'mcp', num: 7, title: 'MCP server + client', usecase: 'Travel Desk tools shared with any AI client.', tags: ['@McpTool', 'Streamable HTTP', 'MCP client'] },
   { id: 'observability', num: 8, title: 'Observability', usecase: 'Tokens, latency, tools and guardrails in Grafana; full traces.', tags: ['Micrometer', 'OpenTelemetry', 'Grafana LGTM'] },
   { id: 'evaluation', num: 9, title: 'LLM evaluation', usecase: 'RAG quality gate with LLM-as-judge, in the UI and in CI.', tags: ['RelevancyEvaluator', 'FactCheckingEvaluator', 'JUnit'] },
+  { id: 'sql', num: 10, title: 'Text-to-SQL', usecase: 'Plain-English questions over the helpdesk database, read-only and guarded.', tags: ['JSqlParser', 'Read-only tx', 'Schema comments'] },
+  { id: 'cache', num: 11, title: 'Semantic cache', usecase: 'Reworded policy questions answered from pgvector, no model call.', tags: ['Advisor', 'pgvector', 'Similarity threshold'] },
+  { id: 'a2a', num: 12, title: 'Multi-agent (A2A)', usecase: 'Helpdesk agent delegates a purchase to another team\'s agent.', tags: ['A2A protocol', 'Agent card', 'Tasks & artifacts'] },
 ];
 
 pages.home = {
@@ -314,11 +317,14 @@ async function askRag() {
   const category = $('#ragCategory').value || null;
   loading($('#ragOut'), 'Retrieving and answering…');
   try {
+    const started = performance.now();
     const { data } = await busy($('#ragForm button'), 'Asking', () => api('/api/rag/ask', { method: 'POST', body: { question, category } }));
+    const took = Math.round(performance.now() - started);
     const answer = md(data.answer).replace(/\[(\d+)\]/g, '<sup class="pill info">$1</sup>');
     const cites = [...data.citations].sort((a, b) => (b.cited - a.cited) || (a.number - b.number));
     $('#ragOut').innerHTML = `<div class="panel ok">
-      <div class="meta">Q: ${esc(question)} ${category ? pill('filter: category == ' + category) : ''}</div>
+      <div class="meta">Q: ${esc(question)} ${category ? pill('filter: category == ' + category) : ''} · ${ms(took)}</div>
+      ${cacheNote(data.cache)}
       ${answer}
       <h3>Retrieved sources (${data.citations.length})</h3>
       ${cites.map((c) => `<details class="cite ${c.cited ? 'cited' : ''}">
@@ -327,6 +333,17 @@ async function askRag() {
         <pre class="code">${esc(c.snippet)}</pre></details>`).join('') || '<p class="empty">No chunk passed the similarity threshold — the assistant refuses instead of guessing.</p>'}
     </div>`;
   } catch (e) { $('#ragOut').innerHTML = problemHtml(e); }
+}
+
+/** Demo 11: whether the semantic cache answered. */
+function cacheNote(cache) {
+  if (!cache) return '';
+  if (cache.hit) {
+    return `<div>${pill('served from semantic cache', 'ok')}<span class="meta">similarity ${cache.similarity.toFixed(3)} to
+      "${esc(cache.matchedQuestion)}" · saved ~${ms(cache.savedMs)} and ${esc(cache.savedTokens)} tokens</span></div>`;
+  }
+  return `<div class="meta">${pill('cache miss', 'info')}${cache.similarity != null
+    ? `closest cached question ${cache.similarity.toFixed(3)} (below the threshold) · ` : ''}answer stored for next time</div>`;
 }
 
 async function loadDocs() {
@@ -391,11 +408,12 @@ function agentResultHtml(result, request) {
   </div>`;
 }
 
-function bindDecisionButtons(root) {
-  $$('[data-approve]', root).forEach((b) => b.addEventListener('click', () => decide(b.dataset.approve, 'approve', b)));
+/** Approve / Reject buttons; the result replaces `target` and `after` runs once the agent finished. */
+function bindDecisionButtons(root, target = $('#helpOut'), after) {
+  $$('[data-approve]', root).forEach((b) => b.addEventListener('click', () => decide(b.dataset.approve, 'approve', b, null, target, after)));
   $$('[data-reject]', root).forEach((b) => b.addEventListener('click', () => {
     const reason = prompt('Reason for rejecting (sent back to the agent):', 'Not allowed without a manager ticket');
-    if (reason !== null) decide(b.dataset.reject, 'reject', b, reason);
+    if (reason !== null) decide(b.dataset.reject, 'reject', b, reason, target, after);
   }));
 }
 
@@ -411,14 +429,15 @@ async function sendHelpdesk() {
   refreshHelpdesk();
 }
 
-async function decide(id, action, button, reason) {
+async function decide(id, action, button, reason, target = $('#helpOut'), after) {
   const qs = action === 'reject' && reason ? '?reason=' + encodeURIComponent(reason) : '';
   try {
     const { data } = await busy(button, action === 'approve' ? 'Running' : 'Rejecting', () => api(`/api/approvals/${id}/${action}${qs}`, { method: 'POST' }));
-    $('#helpOut').innerHTML = `<p class="meta">Human decision: <b>${action}d</b></p>` + agentResultHtml(data);
-    bindDecisionButtons($('#helpOut'));
-  } catch (e) { $('#helpOut').innerHTML = problemHtml(e); }
+    target.innerHTML = `<p class="meta">Human decision: <b>${action}d</b></p>` + agentResultHtml(data);
+    bindDecisionButtons(target, target, after);
+  } catch (e) { target.innerHTML = problemHtml(e); }
   refreshHelpdesk();
+  after?.();
 }
 
 async function refreshHelpdesk() {
@@ -744,6 +763,274 @@ async function runEval(button, qs) {
       <p class="meta">Facts = deterministic keyword check · Relevant / Grounded = LLM-as-judge against the retrieved chunks ·
         "Cited right source" is informational: small models often answer correctly but cite the wrong [n].</p>`;
   } catch (e) { $('#evalOut').innerHTML = problemHtml(e); }
+}
+
+/* ===================================================================== 10 text-to-sql */
+
+pages.sql = {
+  init() {
+    exampleButtons($('#sqlExamples'), samples.sql || [], (s) => { $('#sqlInput').value = s.text; askSql(); });
+    $('#sqlForm').addEventListener('submit', (e) => { e.preventDefault(); askSql(); });
+    $('#sqlSchemaBox').addEventListener('toggle', async (e) => {
+      if (!e.target.open || $('#sqlSchema').dataset.loaded) return;
+      try {
+        $('#sqlSchema').textContent = (await api('/api/sql/schema')).data;
+        $('#sqlSchema').dataset.loaded = 'yes';
+      } catch (err) { $('#sqlSchema').textContent = err.message; }
+    });
+  },
+};
+
+async function askSql() {
+  const question = $('#sqlInput').value.trim();
+  if (!question) return;
+  loading($('#sqlOut'), 'Writing SQL, checking it, running it read-only…');
+  const attemptsTable = (attempts) => table([
+    { label: 'Attempt', key: 'attempt' },
+    { label: 'SQL', cls: 'wrap', html: (r) => `<code>${esc(r.sql)}</code>` },
+    { label: 'Database', cls: 'wrap', html: (r) => (r.error ? pill('error', 'bad') + esc(r.error) : pill('ok', 'ok')) },
+  ], attempts);
+  try {
+    const { data } = await busy($('#sqlForm button'), 'Asking', () => api('/api/sql/ask', { method: 'POST', body: { question } }));
+    $('#sqlOut').innerHTML = `<div class="panel ok">
+      <div class="meta">Q: ${esc(question)}</div>
+      ${md(data.answer)}
+      <h3>Generated SQL</h3>
+      <p class="meta">Model's reasoning: ${esc(data.reasoning)}</p>
+      <pre class="code">${esc(data.sql)}</pre>
+      <div>${data.guardNotes.map((n) => pill('guard: ' + n, 'ok')).join('')}${pill('read-only transaction · 3 s timeout', 'ok')}</div>
+      <h3>Result · ${data.rowCount} row(s)</h3>
+      ${table(data.columns.map((c) => ({ label: c, html: (r) => esc(r[c] ?? '') })), data.rows, 'No rows matched.')}
+      ${data.attempts.length > 1 ? `<h3>Self-repair</h3>${attemptsTable(data.attempts)}` : ''}
+    </div>`;
+  } catch (e) {
+    const p = e.problem || {};
+    if (e.status === 400 && p.guard) {
+      $('#sqlOut').innerHTML = `<div class="panel bad"><div class="meta">Q: ${esc(question)}</div>
+        ${pill('BLOCKED · ' + p.guard, 'bad')}${pill('rule: ' + p.rule, 'bad')}
+        <p>${esc(p.detail)}</p>
+        ${p.sql ? `<h3>SQL the model wrote</h3><pre class="code">${esc(p.sql)}</pre>` : ''}
+        <p class="meta">HTTP 400 · the query never reached the database.</p></div>`;
+    } else if (e.status === 422 && p.attempts) {
+      $('#sqlOut').innerHTML = `<div class="panel bad">${pill('query failed twice', 'bad')} ${esc(p.detail)}${attemptsTable(p.attempts)}</div>`;
+    } else {
+      $('#sqlOut').innerHTML = problemHtml(e);
+    }
+  }
+}
+
+/* ===================================================================== 11 semantic cache */
+
+pages.cache = {
+  init() {
+    $('#cacheTest').addEventListener('click', (e) => busy(e.currentTarget, 'Testing', paraphraseTest));
+    $('#cacheRefresh').addEventListener('click', refreshCache);
+    $('#cacheClear').addEventListener('click', async () => { await api('/api/cache', { method: 'DELETE' }); refreshCache(); });
+    $('#cacheProbeForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const question = $('#cacheProbeInput').value.trim();
+      if (!question) return;
+      try {
+        const { data } = await api('/api/cache/probe', { method: 'POST', body: { question } });
+        $('#cacheProbeOut').innerHTML = `<div class="panel">${data.similarity == null
+          ? pill('nothing cached yet', 'info')
+          : `${data.wouldHit ? pill('would hit', 'ok') : pill('would miss', 'warn')} similarity <b>${data.similarity.toFixed(3)}</b>
+             (threshold ${data.threshold}) to "${esc(data.closestQuestion)}"`}</div>`;
+      } catch (err) { $('#cacheProbeOut').innerHTML = problemHtml(err); }
+    });
+  },
+  show: () => refreshCache(),
+};
+
+async function refreshCache() {
+  try {
+    const [stats, entries] = await Promise.all([api('/api/cache/stats'), api('/api/cache/entries')]);
+    const s = stats.data;
+    const tile = (value, label) => `<div class="stat"><b>${esc(value)}</b><span>${esc(label)}</span></div>`;
+    $('#cacheStats').innerHTML = `<div class="statgrid">
+      ${tile(s.lookups, 'lookups since start')}${tile(s.hits, 'hits')}${tile((s.hitRate * 100).toFixed(0) + '%', 'hit rate')}
+      ${tile(s.tokensSaved, 'tokens saved')}${tile(s.entries, 'cached answers')}${tile(s.threshold, 'similarity threshold')}</div>`;
+    $('#cacheEntries').innerHTML = table([
+      { label: 'Question', key: 'question', cls: 'wrap' },
+      { label: 'Scope', html: (r) => `<code>${esc(r.scope)}</code>` },
+      { label: 'Original latency', html: (r) => ms(r.latencyMs) },
+      { label: 'Tokens', key: 'tokens' },
+      { label: 'Cached at', html: (r) => esc(String(r.createdAt).replace('T', ' ').slice(0, 19)) },
+    ], entries.data, 'The cache is empty.');
+  } catch (e) { $('#cacheStats').innerHTML = problemHtml(e); }
+}
+
+let probes = [];
+
+async function paraphraseTest() {
+  const test = samples.cache;
+  const out = $('#cacheOut');
+  const ask = async (question) => {
+    const started = performance.now();
+    const { data } = await api('/api/rag/ask', { method: 'POST', body: { question } });
+    return { data, took: Math.round(performance.now() - started) };
+  };
+  try {
+    await api('/api/cache', { method: 'DELETE' });
+    loading(out, 'Step 1 · asking the original question (full RAG pipeline)…');
+    const first = await ask(test.original);
+    loading(out, 'Step 2 · asking the same question again…');
+    const second = await ask(test.original);
+    probes = [];
+    for (const v of test.variants) {
+      const { data } = await api('/api/cache/probe', { method: 'POST', body: { question: v.text } });
+      probes.push({ ...v, similarity: data.similarity ?? 0 });
+    }
+    const threshold = (await api('/api/cache/stats')).data.threshold;
+    out.innerHTML = `<div class="cols">
+        <div class="panel"><h3>1 · Original question</h3><p>${esc(test.original)}</p>
+          ${cacheNote(first.data.cache)}<p><b>${ms(first.took)}</b> <span class="meta">retrieval + model call</span></p></div>
+        <div class="panel ok"><h3>2 · Same question again</h3><p>${esc(test.original)}</p>
+          ${cacheNote(second.data.cache)}<p><b>${ms(second.took)}</b> <span class="meta">no retrieval, no model call</span></p></div>
+      </div>
+      <div class="panel"><h3>3 · Rewordings, probed against the cached question</h3>
+        <div class="row"><label>What if the threshold were <input type="range" id="cacheWhatIf" min="0.80" max="1" step="0.01" value="${threshold}">
+          <b id="cacheWhatIfValue">${threshold.toFixed(2)}</b></label><span class="hint">(configured: ${threshold})</span></div>
+        <div id="cacheProbeTable"></div>
+        <p class="meta">Too low and a different question gets someone else's answer; too high and genuine rewordings miss.
+          The default 0.95 was measured with nomic-embed-text on these questions.</p></div>`;
+    $('#cacheWhatIf').addEventListener('input', (e) => renderProbes(+e.target.value));
+    renderProbes(threshold);
+  } catch (e) { out.innerHTML = problemHtml(e); }
+  refreshCache();
+}
+
+function renderProbes(threshold) {
+  $('#cacheWhatIfValue').textContent = threshold.toFixed(2);
+  const verdict = (p) => {
+    const hit = p.similarity >= threshold;
+    if (p.meaning === 'same') return hit ? pill('hit · call saved', 'ok') : pill('miss · saving lost', 'warn');
+    return hit ? pill('hit · WRONG answer served', 'bad') : pill('miss · correct', 'ok');
+  };
+  $('#cacheProbeTable').innerHTML = table([
+    { label: 'Question', key: 'text', cls: 'wrap' },
+    { label: 'Same meaning?', html: (r) => (r.meaning === 'same' ? 'yes' : '<b>no</b>') + `<br><span class="meta">${esc(r.note)}</span>` },
+    { label: 'Similarity', html: (r) => `<b>${r.similarity.toFixed(3)}</b>` },
+    { label: 'At this threshold', html: verdict },
+  ], probes);
+}
+
+/* ===================================================================== 12 multi-agent a2a */
+
+pages.a2a = {
+  init() {
+    const a2a = samples.a2a || {};
+    exampleButtons($('#a2aExamples'), a2a.direct || [], (s) => { $('#a2aInput').value = s.text; sendA2a(); });
+    $('#a2aForm').addEventListener('submit', (e) => { e.preventDefault(); sendA2a(); });
+    $('#a2aFlow').addEventListener('click', (e) => helpdeskToProcurement(e.currentTarget, a2a.helpdesk));
+    loadAgentCard();
+  },
+  show: () => loadExchanges(),
+};
+
+const yes = (v) => (v ? 'yes' : 'no');
+
+async function loadAgentCard() {
+  try {
+    const { data } = await api('/api/a2a/card');
+    const c = data.card;
+    $('#a2aCard').innerHTML = `<div class="panel ok">${pill('discovered', 'ok')} <b>${esc(c.name)}</b> <span class="meta">v${esc(c.version)}</span>
+      <p>${esc(c.description)}</p>
+      <p class="meta">Provider ${esc(c.provider?.organization)} · endpoint <code>${esc(c.url)}</code> · ${esc(c.preferredTransport)} · protocol ${esc(c.protocolVersion)}<br>
+        streaming ${yes(c.capabilities.streaming)} · push notifications ${yes(c.capabilities.pushNotifications)} · state history ${yes(c.capabilities.stateTransitionHistory)}
+        · output ${esc(c.defaultOutputModes.join(', '))}</p>
+      <h3>Skills</h3>
+      ${c.skills.map((s) => `<p><b>${esc(s.name)}</b> <code>${esc(s.id)}</code><br>${esc(s.description)}<br>
+        ${(s.tags || []).map((t) => `<span class="tag">${esc(t)}</span>`).join(' ')}</p>
+        <ul>${(s.examples || []).map((x) => `<li class="meta">${esc(x)}</li>`).join('')}</ul>`).join('')}
+      <details><summary class="meta">Raw agent card from ${esc(data.discoveredAt)}</summary><pre class="code">${esc(pretty(c))}</pre></details></div>`;
+  } catch (e) {
+    $('#a2aCard').innerHTML = problemHtml(e) + '<button class="ghost" id="a2aRetry">Retry</button>';
+    $('#a2aRetry').addEventListener('click', loadAgentCard);
+  }
+}
+
+async function sendA2a(answer) {
+  const text = answer ? answer.text : $('#a2aInput').value.trim();
+  if (!text) return;
+  loading($('#a2aOut'), 'Waiting for the procurement agent (message/send blocks until the task stops)…');
+  try {
+    const body = { text, taskId: answer?.taskId, contextId: answer?.contextId };
+    const { data } = await busy($('#a2aForm button'), 'Sending', () => api('/api/a2a/send', { method: 'POST', body }));
+    showExchange($('#a2aOut'), data);
+  } catch (e) { $('#a2aOut').innerHTML = problemHtml(e); }
+  loadExchanges();
+}
+
+const STATE_KIND = { completed: 'ok', working: 'info', submitted: 'info', 'input-required': 'warn', failed: 'bad', rejected: 'bad', canceled: 'bad' };
+
+function showExchange(target, x) {
+  const t = x.task;
+  const start = t.timeline.find((s) => s.at)?.at;
+  const offset = (at) => (at && start ? '+' + ((Date.parse(at) - Date.parse(start)) / 1000).toFixed(1) + ' s' : '');
+  const prs = t.artifacts.flatMap((a) => a.data?.purchaseRequests || []);
+  target.innerHTML = `<div class="panel ${STATE_KIND[t.state] === 'bad' ? 'bad' : t.state === 'input-required' ? 'warn' : 'ok'}">
+    <div class="meta">${esc(x.caller)} → procurement agent · ${ms(x.elapsedMs)} · task <code>${esc(t.id)}</code></div>
+    <h3>${pill(t.state, STATE_KIND[t.state])} ${esc(t.statusMessage)}</h3>
+    ${t.state === 'input-required' ? `<form class="composer a2a-answer">
+        <input placeholder="Answer the agent (same task)" autocomplete="off" value="Marketing pays">
+        <button type="submit">Answer</button></form>` : ''}
+    <div class="cols">
+      <div><h3>Task history</h3><ol class="timeline">${t.timeline.map((s) => `<li class="${s.role === 'user' ? 'user' : ''}">
+        ${s.role === 'user' ? pill('message from caller') : pill(s.state, STATE_KIND[s.state])}<span class="meta">${offset(s.at)}</span>${esc(s.text)}</li>`).join('')}</ol></div>
+      <div><h3>Artifacts</h3>${t.artifacts.filter((a) => a.text).map((a) => `<p class="meta">${esc(a.name)} (text)</p>${md(a.text)}`).join('') || '<p class="empty">None yet.</p>'}
+        ${prs.length ? `<p class="meta">purchase-request (data)</p>${table([
+          { label: 'PR', html: (r) => `<b>${esc(r.number)}</b>` }, { label: 'Item', key: 'item' }, { label: 'Total', html: (r) => esc(r.totalEur + ' EUR') },
+          { label: 'Dept', key: 'department' }, { label: 'Status', html: (r) => pill(r.status, r.status === 'APPROVED' ? 'ok' : 'warn') },
+          { label: 'Delivery', key: 'expectedDelivery' }], prs)}` : ''}</div>
+    </div>
+    <details><summary class="meta">JSON-RPC request (what went over the wire)</summary><pre class="code">${esc(pretty(x.request))}</pre></details>
+    <details><summary class="meta">JSON-RPC response</summary><pre class="code">${esc(pretty(x.response))}</pre></details>
+  </div>`;
+  $('.a2a-answer', target)?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    sendA2a({ text: $('input', e.currentTarget).value.trim(), taskId: t.id, contextId: t.contextId });
+  });
+}
+
+async function loadExchanges() {
+  try {
+    const { data } = await api('/api/a2a/exchanges');
+    $('#a2aExchanges').innerHTML = table([
+      { label: 'When', html: (r) => esc(String(r.at).slice(11, 19)) },
+      { label: 'Caller', key: 'caller' },
+      { label: 'Message', key: 'text', cls: 'wrap' },
+      { label: 'State', html: (r) => pill(r.task.state, STATE_KIND[r.task.state]) },
+      { label: 'Time', html: (r) => ms(r.elapsedMs) },
+      { label: '', html: (r) => `<button class="small ghost" data-x="${r.i}">Show</button>` },
+    ], data.map((r, i) => ({ ...r, i })), 'No A2A calls yet.');
+    $$('[data-x]', $('#a2aExchanges')).forEach((b) => b.addEventListener('click', () => {
+      showExchange($('#a2aOut'), data[+b.dataset.x]);
+      $('#a2aOut').scrollIntoView({ block: 'start' });
+    }));
+  } catch (e) { $('#a2aExchanges').innerHTML = problemHtml(e); }
+}
+
+async function helpdeskToProcurement(button, message) {
+  const out = $('#a2aFlowOut');
+  loading(out, 'Helpdesk agent is working…');
+  const latestHelpdeskCall = async () => (await api('/api/a2a/exchanges')).data.find((x) => x.caller === 'helpdesk agent');
+  const before = (await latestHelpdeskCall().catch(() => null))?.at;
+  // after Approve: show the A2A task the helpdesk agent's tool created (none after Reject)
+  const showLatest = async () => {
+    await loadExchanges();
+    const latest = await latestHelpdeskCall();
+    if (latest && latest.at !== before) {
+      const holder = document.createElement('div');
+      out.appendChild(holder);
+      showExchange(holder, latest);
+    }
+  };
+  try {
+    const { data } = await busy(button, 'Working', () => api('/api/helpdesk/chat', { method: 'POST', body: { message } }));
+    out.innerHTML = agentResultHtml(data, message);
+    bindDecisionButtons(out, out, showLatest);
+  } catch (e) { out.innerHTML = problemHtml(e); }
 }
 
 /* ===================================================================== boot */

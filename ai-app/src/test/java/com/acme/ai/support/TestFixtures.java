@@ -24,7 +24,10 @@ public final class TestFixtures {
 		return new AcmeProperties(new AcmeProperties.Llm("", true), new AcmeProperties.Rag(4, 0.55, false, false),
 				new AcmeProperties.Guardrails(false, List.of("banking", "cards", "payments", "loans"),
 						List.of("confidential pricing", "system prompt")),
-				new AcmeProperties.Extraction(2), new AcmeProperties.Agents(3), new AcmeProperties.Evaluation(0.8));
+				new AcmeProperties.Extraction(2), new AcmeProperties.Agents(3), new AcmeProperties.Evaluation(0.8),
+				new AcmeProperties.Sql(List.of("employee", "asset", "ticket"), 200, 3),
+				new AcmeProperties.Cache(true, 0.95, java.time.Duration.ofHours(24)),
+				new AcmeProperties.A2a("http://localhost:8082"));
 	}
 
 	public static AiClients aiClients(ChatModel chatModel) {

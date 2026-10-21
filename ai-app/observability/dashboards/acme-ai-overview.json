@@ -103,8 +103,31 @@
       "targets": [ { "refId": "A", "expr": "sum by (feature, outcome) (increase(acme_ai_feature_milliseconds_count[1m]))", "legendFormat": "{{feature}} · {{outcome}}" } ]
     },
     {
+      "id": 13, "type": "stat", "title": "Semantic cache hit rate (range)",
+      "gridPos": { "x": 0, "y": 28, "w": 6, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 0, "min": 0, "max": 1, "color": { "mode": "fixed", "fixedColor": "green" } } },
+      "targets": [ { "refId": "A", "expr": "sum(increase(acme_cache_lookups_total{result=\"hit\"}[$__range])) / clamp_min(sum(increase(acme_cache_lookups_total[$__range])), 1)" } ]
+    },
+    {
+      "id": 14, "type": "stat", "title": "Tokens saved by the semantic cache (range)",
+      "gridPos": { "x": 6, "y": 28, "w": 6, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0, "color": { "mode": "fixed", "fixedColor": "green" } } },
+      "targets": [ { "refId": "A", "expr": "sum(increase(acme_cache_tokens_saved_total[$__range]))" } ]
+    },
+    {
+      "id": 15, "type": "timeseries", "title": "Semantic cache lookups per minute (hit · miss)",
+      "gridPos": { "x": 12, "y": 28, "w": 12, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "fillOpacity": 60, "stacking": { "mode": "normal" } } } },
+      "targets": [ { "refId": "A", "expr": "sum by (result) (increase(acme_cache_lookups_total[1m]))", "legendFormat": "{{result}}" } ]
+    },
+    {
       "id": 12, "type": "table", "title": "Recent traces (click a trace ID to open the span tree)",
-      "gridPos": { "x": 0, "y": 28, "w": 24, "h": 10 },
+      "gridPos": { "x": 0, "y": 34, "w": 24, "h": 10 },
       "datasource": { "type": "tempo", "uid": "tempo" },
       "targets": [ { "refId": "A", "queryType": "traceql", "query": "{ resource.service.name = \"acme-ai-showcase\" && name =~ \"http post /api/.*\" }", "limit": 20, "tableType": "traces" } ]
     }

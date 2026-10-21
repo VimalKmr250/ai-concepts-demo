@@ -10,7 +10,28 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  */
 @ConfigurationProperties("acme")
 public record AcmeProperties(@DefaultValue Llm llm, @DefaultValue Rag rag, @DefaultValue Guardrails guardrails,
-		@DefaultValue Extraction extraction, @DefaultValue Agents agents, @DefaultValue Evaluation evaluation) {
+		@DefaultValue Extraction extraction, @DefaultValue Agents agents, @DefaultValue Evaluation evaluation,
+		@DefaultValue Sql sql, @DefaultValue Cache cache, @DefaultValue A2a a2a) {
+
+	/**
+	 * Remote agents reached over the A2A protocol (demo 12).
+	 */
+	public record A2a(@DefaultValue("http://localhost:8082") String procurementUrl) {
+	}
+
+	/**
+	 * Semantic cache for the RAG demo (demo 11).
+	 */
+	public record Cache(@DefaultValue("true") boolean enabled, @DefaultValue("0.95") double similarityThreshold,
+			@DefaultValue("24h") java.time.Duration ttl) {
+	}
+
+	/**
+	 * Text-to-SQL limits (demo 10).
+	 */
+	public record Sql(@DefaultValue({ "employee", "asset", "ticket" }) List<String> allowedTables,
+			@DefaultValue("200") int maxRows, @DefaultValue("3") int timeoutSeconds) {
+	}
 
 	public record Evaluation(@DefaultValue("0.8") double minPassRate) {
 	}

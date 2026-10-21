@@ -46,6 +46,13 @@ public class StubChatModel implements ChatModel {
 		return this;
 	}
 
+	/** Clears the script and recorded prompts (for a stub shared by several tests). */
+	public synchronized StubChatModel reset() {
+		this.script.clear();
+		this.prompts.clear();
+		return this;
+	}
+
 	public StubChatModel otherwise(Function<Prompt, AssistantMessage> fallback) {
 		this.fallback = fallback;
 		return this;

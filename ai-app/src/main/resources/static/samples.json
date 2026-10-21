@@ -54,5 +54,31 @@
     { "label": "Germany + FX", "text": "Is 2026-10-03 a public holiday in Germany? Also convert 1200 EUR to GBP." },
     { "label": "Lagos budget", "text": "My daily budget in Lagos is 150 EUR. How much is that in NGN, and what's the local time there?" }
   ],
-  "tripBriefing": { "city": "London", "date": "2026-12-28", "budget": "250 USD" }
+  "tripBriefing": { "city": "London", "date": "2026-12-28", "budget": "250 USD" },
+  "sql": [
+    { "label": "Open tickets per priority", "text": "How many open tickets are there per priority?" },
+    { "label": "Out-of-warranty laptops", "text": "Which laptops are out of warranty and who has them?" },
+    { "label": "Tickets per department (7 days)", "text": "How many tickets were raised in the last 7 days per department?" },
+    { "label": "Blocked: delete", "text": "Delete all resolved tickets" },
+    { "label": "Blocked: other table", "text": "Show all rows of the spring_ai_chat_memory table" }
+  ],
+  "cache": {
+    "original": "How many leave days can I carry over to next year?",
+    "variants": [
+      { "text": "How many leave days can I carry forward to next year?", "meaning": "same", "note": "paraphrase" },
+      { "text": "How many leave days can I carry over into next year?", "meaning": "same", "note": "paraphrase" },
+      { "text": "How many vacation days can I carry over to next year?", "meaning": "same", "note": "synonym" },
+      { "text": "How many leave days can I take next year?", "meaning": "different", "note": "near miss: other question, same words" },
+      { "text": "How many sick days are fully paid?", "meaning": "different", "note": "unrelated" }
+    ]
+  },
+  "a2a": {
+    "direct": [
+      { "label": "Replacement laptop", "text": "Order a replacement laptop for mgarcia (Miguel Garcia, Engineering department). LAP-1502 is broken and out of warranty." },
+      { "label": "Developer laptop (finance approval)", "text": "Order a laptop for jdoe (Engineering). He builds and runs local AI models all day and the standard laptop is too slow." },
+      { "label": "Over budget", "text": "Buy 3 standard laptops for new HR hires, HR department pays." },
+      { "label": "Missing department (input-required)", "text": "Order a laptop for tchen" }
+    ],
+    "helpdesk": "Miguel Garcia's laptop LAP-1502 is broken and out of warranty. Please order a replacement for mgarcia."
+  }
 }

@@ -27,6 +27,9 @@
     <a href="#mcp" data-nav="mcp"><b>7</b> MCP</a>
     <a href="#observability" data-nav="observability"><b>8</b> Observability</a>
     <a href="#evaluation" data-nav="evaluation"><b>9</b> LLM evaluation</a>
+    <a href="#sql" data-nav="sql"><b>10</b> Text-to-SQL</a>
+    <a href="#cache" data-nav="cache"><b>11</b> Semantic cache</a>
+    <a href="#a2a" data-nav="a2a"><b>12</b> Multi-agent (A2A)</a>
     <div class="navgroup">Learn</div>
     <a href="concepts.html"><b>?</b> Concepts guide</a>
   </nav>
@@ -295,6 +298,107 @@
         <span class="hint">Takes 1–2 minutes on a local 4B model.</span>
       </div>
       <div id="evalOut"></div>
+    </section>
+
+    <!-- ================================================================ 10 TEXT-TO-SQL -->
+    <section id="sql" class="page" hidden>
+      <div class="pagehead">
+        <h1><span class="num">10</span> Text-to-SQL</h1>
+        <p class="usecase">Use case: <b>Ask the helpdesk data</b> — IT managers ask about tickets, laptops and employees in plain English.</p>
+        <a class="deeplink" href="concepts.html#s10">How this works behind the scenes →</a>
+      </div>
+      <details class="how"><summary>How it works</summary>
+        <ul>
+          <li>The model sees the schema of three allow-listed tables, built from Postgres <code>COMMENT</code>s that carry the business meaning ("out of warranty means warranty_until &lt; today").</li>
+          <li>It returns <code>{reasoning, sql}</code> as structured output. <code>SqlGuard</code> parses the SQL with JSqlParser: one <code>SELECT</code>, allow-listed tables only, no dangerous functions, <code>LIMIT</code> clamped to 200.</li>
+          <li>The query runs in a <b>read-only transaction</b> with a 3 s statement timeout, so the database refuses writes even if the guard were bypassed.</li>
+          <li>A database error goes back to the model for one repair attempt. A second, short LLM call explains the returned rows.</li>
+        </ul>
+      </details>
+      <div class="examples" id="sqlExamples"></div>
+      <form class="composer" id="sqlForm">
+        <input id="sqlInput" placeholder="Ask about tickets, laptops or employees…" autocomplete="off">
+        <button type="submit">Ask</button>
+      </form>
+      <div id="sqlOut"></div>
+      <details class="how" id="sqlSchemaBox"><summary>The schema description the model receives</summary>
+        <pre class="code" id="sqlSchema">Loading…</pre>
+      </details>
+    </section>
+
+    <!-- ================================================================ 11 SEMANTIC CACHE -->
+    <section id="cache" class="page" hidden>
+      <div class="pagehead">
+        <h1><span class="num">11</span> Semantic caching</h1>
+        <p class="usecase">Use case: <b>don't pay twice for the same question</b> — employees ask the same policy questions in different words; repeats are answered from pgvector.</p>
+        <a class="deeplink" href="concepts.html#s11">How this works behind the scenes →</a>
+      </div>
+      <details class="how"><summary>How it works</summary>
+        <ul>
+          <li><code>SemanticCacheAdvisor</code> runs first in the RAG demo's <code>ChatClient</code>. It embeds the question and finds the closest cached question in a second pgvector table, <code>semantic_cache</code>.</li>
+          <li>Similarity at or above the threshold (0.95) returns the cached answer and citations without retrieval or a model call. Below it, the normal RAG pipeline runs and its answer is stored.</li>
+          <li>Entries are kept apart by feature, retrieval settings and model, expire after 24 h, and are dropped whenever a document is ingested or deleted.</li>
+          <li>Only stateless answers are cached: never chat with memory, helpdesk actions or anything personal.</li>
+        </ul>
+      </details>
+      <div id="cacheStats"></div>
+      <div class="row">
+        <button id="cacheTest">Run the paraphrase test</button>
+        <button class="ghost" id="cacheRefresh">Refresh</button>
+        <button class="ghost danger" id="cacheClear">Clear cache</button>
+      </div>
+      <p class="hint">The test clears the cache, asks one policy question for real (a miss), asks it again (a hit), then
+        probes five rewordings against it without calling the model.</p>
+      <div id="cacheOut"></div>
+      <h2>Probe any question</h2>
+      <form class="composer" id="cacheProbeForm">
+        <input id="cacheProbeInput" placeholder="How close is this question to something already cached?" autocomplete="off">
+        <button type="submit">Probe</button>
+      </form>
+      <div id="cacheProbeOut"></div>
+      <h2>Cached entries</h2>
+      <div id="cacheEntries"></div>
+    </section>
+
+    <!-- ================================================================ 12 MULTI-AGENT A2A -->
+    <section id="a2a" class="page" hidden>
+      <div class="pagehead">
+        <h1><span class="num">12</span> Multi-agent with A2A</h1>
+        <p class="usecase">Use case: <b>the helpdesk agent asks the procurement agent</b> — another team's AI agent, in its own service, reached over the Agent2Agent protocol.</p>
+        <a class="deeplink" href="concepts.html#s12">How this works behind the scenes →</a>
+      </div>
+      <details class="how"><summary>How it works</summary>
+        <ul>
+          <li><b>Discovery:</b> the procurement agent (<code>procurement-agent</code>, port 8082) publishes an <b>agent card</b> at <code>/.well-known/agent-card.json</code>: name, endpoint, transport and skills with examples.</li>
+          <li><b>Messaging:</b> callers send a JSON-RPC <code>message/send</code>. The agent answers with a <b>task</b>: a state (submitted → working → completed, or input-required / failed), a history of status messages, and <b>artifacts</b> (a text summary and the purchase request as data).</li>
+          <li><b>Opaque by design:</b> callers never see the other agent's prompt, tools or model. That is the difference from MCP, where the caller's own model drives the remote tools.</li>
+          <li>The helpdesk tool <code>requestHardwarePurchase</code> uses the A2A Java SDK client and waits for human approval, because it spends budget.</li>
+        </ul>
+      </details>
+      <div class="cols">
+        <div>
+          <h2>Agent card (discovered)</h2>
+          <div id="a2aCard"></div>
+        </div>
+        <div>
+          <h2>Send the agent a message</h2>
+          <div class="examples" id="a2aExamples"></div>
+          <form class="composer" id="a2aForm">
+            <input id="a2aInput" placeholder="A hardware request for the procurement agent…" autocomplete="off">
+            <button type="submit">Send</button>
+          </form>
+          <p class="hint">Direct A2A call from this page, as another agent would make it.</p>
+        </div>
+      </div>
+      <div id="a2aOut"></div>
+      <h2>Full flow: helpdesk agent → human approval → procurement agent</h2>
+      <div class="row">
+        <button id="a2aFlow">Report LAP-1502 broken and ask for a replacement</button>
+        <span class="hint">Uses the demo 4 helpdesk agent; Approve triggers the A2A call.</span>
+      </div>
+      <div id="a2aFlowOut"></div>
+      <h2>Recent A2A calls from this app</h2>
+      <div id="a2aExchanges"></div>
     </section>
 
   </main>

@@ -15,12 +15,15 @@ This guide covers every topic in the Acme AI Showcase: the concept, why enterpri
 7. [MCP](#7-model-context-protocol)
 8. [Observability](#8-observability)
 9. [LLM evaluation](#9-llm-evaluation-as-a-quality-gate)
+10. [Text-to-SQL](#10-text-to-sql)
+11. [Semantic caching](#11-semantic-caching)
+12. [Multi-agent with A2A](#12-multi-agent-systems-with-a2a)
 
 ---
 
 ## 0. The common chassis: ChatClient and advisors
 
-*Shared by all nine demos.*
+*Shared by all twelve demos.*
 
 ### The idea
 
@@ -530,3 +533,162 @@ The result is a pass rate compared with a threshold, not a demand for 100%. Judg
 > All 11 answers contained the right facts in every run. The early failures came from the judge. The 4B model often cited the wrong `[n]`, so the evaluator graded the answer against the wrong chunk, and it rejected correct paraphrases ("minimum 14" against "at least 14"). Validating the judge is part of building an eval.
 
 **In the code:** `evaluation/RagEvaluationService.java`, `evaluation/VerdictNormalizerAdvisor.java`, `eval/rag-golden.json`, `test/…/RagQualityGateIT.java`, `pom.xml` (`llm-eval` profile)
+
+---
+
+## 10. Text-to-SQL
+
+*Use case: IT managers ask about tickets, laptops and employees in plain English.*
+
+### The idea
+
+Most company data sits in relational databases, and most people who need answers from it don't write SQL. **Text-to-SQL** lets a model write the query: give it the schema, ask the question, run what it writes. It is one of the most requested enterprise AI features and one of the riskiest, because the model's output is *executable*. Three things decide whether it works:
+
+- **A schema with meaning.** Column names don't say that "out of warranty" means `warranty_until < CURRENT_DATE`, or which values `status` can take. Business definitions have to reach the model.
+- **Defense in depth.** A prompt that says "only SELECT" is a request, not a control. The query is parsed and checked, and the database itself refuses writes.
+- **Answers from data.** A database error goes back to the model once to repair the query, and the final answer is written only from the rows that came back.
+
+```mermaid
+flowchart TB
+  Q["Which laptops are out of warranty?"] --> G["Generate · entity(SqlQuery)<br/>schema from Postgres COMMENTs<br/>plus today's date"]
+  G -- "reasoning + sql" --> SG["SqlGuard · JSqlParser<br/>one SELECT · allowed tables<br/>no risky functions · LIMIT ≤ 200"]
+  SG -- "violation" --> B["400 problem detail<br/>the database never sees it"]
+  SG -- "passes" --> X["Execute<br/>read-only transaction · 3 s timeout"]
+  X -- "database error, once" --> G
+  X -- "rows" --> E["Explain · second LLM call<br/>answers only from the rows"]
+```
+
+### Behind the scenes
+
+1. Flyway migration `V3__analytics_comments.sql` adds `COMMENT ON TABLE` and `COMMENT ON COLUMN` to `employee`, `asset` and `ticket`: what each holds, the allowed values of enum-like columns, and definitions such as "open work means status <> 'RESOLVED'". `SchemaCatalog` reads `information_schema` and the comments for the allowed tables only. The demo page shows the resulting schema text.
+2. `SqlAssistantService` asks for `SqlQuery(reasoning, sql)` with native structured output, as in demo 6. Today's date is in the prompt, so "last 7 days" becomes `now() - interval '7 days'`.
+3. `SqlGuard` parses the SQL with JSqlParser. It rejects anything other than exactly one `SELECT` (a `DELETE` is rule `not-a-select`), `SELECT … FOR UPDATE`, `SELECT INTO`, functions such as `pg_read_file`, `dblink` or `set_config`, and any table outside the allowlist; `TablesNamesFinder` also finds tables inside subqueries and CTEs. It adds `LIMIT 200` or lowers a larger limit. A violation is a `GuardrailViolationException`, so it becomes the same 400 problem detail as demo 2, plus the SQL the model wrote.
+4. The query runs through `JdbcClient` in a read-only `TransactionTemplate` that also sets `SET TRANSACTION READ ONLY` and `SET LOCAL statement_timeout = '3s'`. A write that got past the guard would still fail with "cannot execute DELETE in a read-only transaction"; `TextToSqlIT` checks exactly that.
+5. If Postgres rejects the query (a wrong column, a type mismatch), the error and the failed SQL go back to the model once. The UI shows both attempts.
+6. A second, short call writes the answer from at most 50 result rows. The model never sees data it didn't query.
+
+### Design decisions and lessons
+
+- In production, step 4 would also use a dedicated read-only database role, ideally on a replica. The demo shares one connection pool, so the transaction settings do that job.
+- The allowlist matters as much as read-only access. "Show all rows of `spring_ai_chat_memory`" can't damage the database, but it would expose other people's conversations. The guard blocks it.
+- Models like `SELECT *` over joins. A joined result has several columns named `id` or `status`; keyed by name, later columns silently overwrote earlier ones and the table showed wrong values. Repeated names are now numbered (`status_2`).
+- Asked vaguely for "the chat memory table", the 4B model once avoided the forbidden table, joined the allowed ones instead and described the result as chat memory. A guard can stop forbidden access but can't make the answer honest, which is why the page always shows the SQL.
+
+**In the code:** `analytics/SqlAssistantService.java`, `analytics/SqlGuard.java`, `analytics/SchemaCatalog.java`, `db/migration/V3__analytics_comments.sql`, `test/…/SqlGuardTest.java`, `test/…/TextToSqlIT.java`
+
+---
+
+## 11. Semantic caching
+
+*Use case: employees ask the same policy questions in different words; repeats are answered from the cache.*
+
+### The idea
+
+LLM calls are slow and paid per token, and real traffic repeats itself: "How many leave days can I carry over?" arrives every week in a dozen phrasings. A normal cache keyed by the exact text misses all of them. A **semantic cache** keys on meaning. It embeds the question, looks for an earlier question whose embedding is close enough, and returns that answer without retrieval or a model call.
+
+The design turns on one number, the **similarity threshold**:
+- Too low, and a *different* question gets someone else's answer. That is worse than a slow answer.
+- Too high, and genuine rewordings miss, so the cache saves little.
+
+```mermaid
+flowchart TB
+  Q["Question"] --> CA["SemanticCacheAdvisor · first in the RAG ChatClient<br/>embed · nearest cached question<br/>same feature, scope, model · under 24 h old"]
+  CA -- "similarity ≥ 0.95 · hit" --> H["Cached answer + citations<br/>about 0.1 s · no tokens"]
+  CA -- "below 0.95 · miss" --> R["RAG pipeline + model<br/>demo 3 · 4–5 s"]
+  R --> S[("Store the question and answer<br/>pgvector table semantic_cache")]
+  I["Document ingested or deleted"] -. "clears the RAG entries" .-> S
+```
+
+### Behind the scenes
+
+1. `SemanticCacheService` owns a second pgvector table, `semantic_cache`, built with `PgVectorStore.builder(...)` inside the service. Spring Boot's auto-configured store for the handbook stays as it is.
+2. An entry's text is the question. Its metadata holds the answer, the citations as JSON, the feature, a scope, the model, `createdAt`, and the original latency and token count. Spring AI normally embeds the metadata along with the text, which made even an identical question score only 0.71, so each entry gets a content formatter that embeds the question alone.
+3. `SemanticCacheAdvisor` is a `CallAdvisor` at order −100, ahead of the RAG advisor (order 0) in `PolicyQaService`'s ChatClient. It searches for the single nearest entry, filtered on `feature`, `scope`, `model` and `createdAt` (the 24 h TTL).
+4. **Hit:** the advisor returns a response built from the cached answer and puts the cached citations back into the response context as `DOCUMENT_CONTEXT`, so `PolicyQaService` builds its citation list exactly as for a live answer. Retrieval and the model call never run.
+5. **Miss:** the advisor calls the rest of the chain, then stores the question, answer and citations. Either way the response carries a `CacheInfo`, which the RAG page shows as "served from semantic cache" or "cache miss".
+6. The scope is the category filter plus top-k and threshold (`ALL|k=4|t=0.55`), so an answer retrieved under one filter is never served under another. The evaluation in demo 9 bypasses the cache; otherwise it would grade cached answers.
+7. `IngestionService` clears all RAG entries when a document is ingested or deleted, so an answer can't outlive its source.
+8. Counters `acme.cache.lookups{feature, result}` and `acme.cache.tokens.saved` feed two Grafana panels: hit rate and tokens saved.
+
+### Choosing the threshold: measured, not guessed
+
+The cached question was "How many leave days can I carry over to next year?". With `nomic-embed-text`, these were the similarities of other questions to it:
+
+| Question | Same meaning? | Similarity | At 0.90 | At 0.95 |
+|---|---|---|---|---|
+| …carry over **into** next year? | yes | 0.990 | hit | hit |
+| …carry **forward** to next year? | yes | 0.970 | hit | hit |
+| How many leave days can I **take** next year? | **no** | 0.936 | **wrong answer** | miss |
+| How many **vacation** days can I carry over…? | yes | 0.911 | hit | miss |
+| How many sick days are fully paid? | no | 0.684 | miss | miss |
+
+At 0.90 the near miss (same words, different question) gets the carry-over answer. The default of 0.95 gives up the synonym to keep answers correct. The cache page has a slider that replays this table at any threshold.
+
+### Design decisions and lessons
+
+- Only stateless answers are cached. Chat with memory, helpdesk actions and anything personal or permission-dependent must never come from a shared cache, so the advisor is attached to the RAG feature only.
+- Thresholds belong to an embedding model. A different model (for example `text-embedding-3-small`) gives different numbers, so measure again after switching.
+- A semantic cache pays off on expensive, repetitive traffic such as FAQs, policy questions and support. For one-off questions it only adds an embedding call.
+- Providers' *prompt caching* is a different tool. It reuses the processing of an identical prompt prefix and makes every call with the same system prompt cheaper, but it still calls the model; a semantic cache skips the call.
+
+**In the code:** `cache/SemanticCacheService.java`, `cache/SemanticCacheAdvisor.java`, `cache/CacheController.java`, `rag/PolicyQaService.java`, `rag/IngestionService.java`, `test/…/SemanticCacheAdvisorTest.java`, `test/…/SemanticCacheIT.java`
+
+---
+
+## 12. Multi-agent systems with A2A
+
+*Use case: the helpdesk agent asks the procurement team's agent to buy a replacement laptop.*
+
+### The idea
+
+A large company won't run one giant agent. Each team builds agents for its own domain, with its own tools, data, model and release cycle, and those agents need to work together across team boundaries. **A2A (Agent2Agent)** is an open protocol for that. Google started it in April 2025, and it is now developed under the Linux Foundation. It complements MCP:
+
+| | MCP (demo 7) | A2A (this demo) |
+|---|---|---|
+| Connects | an AI app to **tools and data** | an agent to **another agent** |
+| Who decides | the caller's model picks every tool call | the remote agent plans and acts on its own |
+| On the wire | tool schemas, arguments, results | a message in, a **task** out |
+| The caller sees | every tool | only the agent card; prompt, tools and model stay private |
+
+The building blocks:
+- **Agent card.** A JSON document at `/.well-known/agent-card.json` with the agent's name, endpoint, transport, capabilities and **skills** with examples. This is how agents find each other.
+- **Message.** What a caller sends, made of **parts**: text, files or structured data.
+- **Task.** The unit of work, with a lifecycle: `submitted → working → completed`, or `input-required`, `failed`, `rejected`, `canceled`. Its **history** records the status messages and its **artifacts** carry the results.
+- **Transport.** JSON-RPC 2.0 over HTTP (`message/send`, `tasks/get`, `tasks/cancel`), with optional streaming and push notifications.
+
+```mermaid
+flowchart TB
+  U["IT supporter"] --> H["Helpdesk agent · ai-app :8080<br/>demo 4 tools + requestHardwarePurchase"]
+  H -- "proposes the purchase" --> AP["Human approval<br/>it spends budget"]
+  AP -- "approved" --> CL["ProcurementAgentClient<br/>A2A Java SDK · JSON-RPC"]
+  CL -- "1 · GET agent card" --> P["Procurement agent · :8082<br/>its own prompt, tools and model"]
+  CL == "2 · message/send" ==> P
+  P == "task: state · history · artifacts" ==> CL
+```
+
+### Behind the scenes: the procurement agent
+
+1. `procurement-agent` is a separate Spring Boot app with `spring-ai-a2a-server-autoconfigure`. It needs two beans: an `AgentCard` (in `AgentConfig`) and an `AgentExecutor` (`ProcurementAgentExecutor`). The library serves the card, accepts `message/send` at `/` and keeps tasks in memory.
+2. The A2A SDK calls `execute` for every message. The executor marks the task `submitted` and checks, in code, that the caller named the paying department. If not, the task stops in **`input-required`** with a question, before any model call. The caller answers with another `message/send` that carries the same `taskId`, and the executor runs again with the task history.
+3. Then an ordinary Spring AI tool-calling agent runs with two tools. `searchCatalog` lists the approved hardware and who each item is for. `createPurchaseRequest` computes the total, checks the department's quarterly budget, and either raises the request or refuses with the numbers. Every step publishes a `working` status message, which gives the caller a timeline in `task.history`.
+4. The result is two **artifacts**: a text summary and, when a request was raised, a **data part** with the purchase request as JSON, so the calling agent doesn't have to parse prose. The summary is written from the ledger, not taken from the model's reply (see the lessons below).
+
+### Behind the scenes: the helpdesk side
+
+1. The helpdesk agent has a new tool, `requestHardwarePurchase(username, need)`, marked `@RequiresApproval` like the password reset in demo 4. The agent proposes it, a human approves, and only then does it run.
+2. The tool looks up the employee's department and calls `ProcurementAgentClient`, which uses the official A2A Java SDK. The client reads the agent card on first use, so ai-app starts without the other agent, and sends a blocking `message/send` through the SDK's `JSONRPCTransport`.
+3. The task's summary and data go back to the helpdesk model as the tool result, and the helpdesk agent answers the user. A small wire tap around the SDK's HTTP client keeps the raw JSON-RPC request and response for the demo page.
+4. If the procurement agent is down, the A2A page gets a 503 problem detail with a hint to start it, and the helpdesk tool tells its model that nothing was ordered.
+
+### Design decisions and lessons
+
+Getting a 4B local model to run this flow reliably taught the central lesson of agent-to-agent work: **whatever other agents rely on must be enforced in code, not requested in the prompt.**
+
+- Asked to "order a laptop for tchen", the model made up a paying department and raised a request. The department is now checked in code before the model runs, and a missing one becomes `input-required`.
+- It computed 3 × 1350 EUR as 3000 EUR, and with a separate `checkBudget` tool it sometimes stopped after the check. The total and the budget rule now live inside `createPurchaseRequest`.
+- Its summaries misquoted totals and once announced "PR-7892 pending approval" when nothing had been raised. Other agents act on that text, so the summary is now built from the ledger, and a reply that claims a purchase request the ledger doesn't have is discarded.
+- Once it searched the catalog ten times in a row. The tool result now says what to do next and notices repeats.
+- The helpdesk agent sees none of this, which is the point of A2A: the procurement team can change its prompt, tools or model without the helpdesk team noticing, as long as the card and the task format stay the same.
+- Production A2A also needs authentication (the agent card declares security schemes such as OAuth 2 or API keys), durable task storage instead of memory, and streaming or push notifications for long-running tasks.
+
+**In the code:** `procurement-agent/…/ProcurementAgentExecutor.java`, `procurement-agent/…/ProcurementTools.java`, `procurement-agent/…/AgentConfig.java`, `ai-app/…/a2a/ProcurementAgentClient.java`, `ai-app/…/helpdesk/HelpdeskTools.java`, `procurement-agent/test/…/A2AProtocolTest.java`

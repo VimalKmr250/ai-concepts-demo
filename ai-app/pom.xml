@@ -78,6 +78,24 @@
             <artifactId>spring-ai-starter-mcp-client</artifactId>
         </dependency>
 
+        <!-- Text-to-SQL: parse and validate model-generated SQL before running it -->
+        <dependency>
+            <groupId>com.github.jsqlparser</groupId>
+            <artifactId>jsqlparser</artifactId>
+            <version>5.4</version>
+        </dependency>
+        <!-- Multi-agent: the official A2A Java SDK client with the JSON-RPC transport -->
+        <dependency>
+            <groupId>io.github.a2asdk</groupId>
+            <artifactId>a2a-java-sdk-client</artifactId>
+            <version>${a2a-sdk.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.a2asdk</groupId>
+            <artifactId>a2a-java-sdk-client-transport-jsonrpc</artifactId>
+            <version>${a2a-sdk.version}</version>
+        </dependency>
+
         <!-- Starts compose.yaml (Postgres + Grafana LGTM) on spring-boot:run -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

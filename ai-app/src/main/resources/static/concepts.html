@@ -91,6 +91,9 @@ td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
     <a href="#s7" data-nav="s7"><b>7</b> MCP</a>
     <a href="#s8" data-nav="s8"><b>8</b> Observability</a>
     <a href="#s9" data-nav="s9"><b>9</b> LLM evaluation</a>
+    <a href="#s10" data-nav="s10"><b>10</b> Text-to-SQL</a>
+    <a href="#s11" data-nav="s11"><b>11</b> Semantic cache</a>
+    <a href="#s12" data-nav="s12"><b>12</b> Multi-agent (A2A)</a>
   </nav>
 
   <main class="guide" id="main">
@@ -107,7 +110,7 @@ td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
     <section class="topic" id="s0">
       <div class="pagehead">
         <h1><span class="num">0</span> The common chassis: ChatClient and advisors</h1>
-        <p class="usecase">Shared by all nine demos.</p>
+        <p class="usecase">Shared by all twelve demos.</p>
       </div>
 
       <h2>The idea</h2>
@@ -965,6 +968,298 @@ td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
       <div class="panel warn"><p>All 11 answers contained the right facts in every run. The early failures came from the judge. The 4B model often cited the wrong <code>[n]</code>, so the evaluator graded the answer against the wrong chunk, and it rejected correct paraphrases ("minimum 14" against "at least 14"). Validating the judge is part of building an eval.</p></div>
       <h2>In the code</h2>
       <ul class="files"><li><code>evaluation/RagEvaluationService.java</code></li><li><code>evaluation/VerdictNormalizerAdvisor.java</code></li><li><code>eval/rag-golden.json</code></li><li><code>test/…/RagQualityGateIT.java</code></li><li><code>pom.xml · llm-eval profile</code></li></ul>
+    </section>
+
+    <!-- ===================================================================== 10 -->
+    <section class="topic" id="s10">
+      <div class="pagehead">
+        <h1><span class="num">10</span> Text-to-SQL</h1>
+        <p class="usecase">Use case: IT managers ask about tickets, laptops and employees in plain English.</p>
+        <a class="deeplink" href="/#sql">Open demo 10 →</a>
+      </div>
+
+      <h2>The idea</h2>
+      <p>Most company data sits in relational databases, and most people who need answers from it don't write SQL. <b>Text-to-SQL</b> lets a model write the query: give it the schema, ask the question, run what it writes. It is one of the most requested enterprise AI features and one of the riskiest, because the model's output is <i>executable</i>. Three things decide whether it works:</p>
+      <ul class="notes">
+        <li><b>A schema with meaning.</b> Column names don't say that "out of warranty" means <code>warranty_until &lt; CURRENT_DATE</code>, or which values <code>status</code> can take. Business definitions have to reach the model.</li>
+        <li><b>Defense in depth.</b> A prompt that says "only SELECT" is a request, not a control. The query is parsed and checked, and the database itself refuses writes.</li>
+        <li><b>Answers from data.</b> A database error goes back to the model once to repair the query, and the final answer is written only from the rows that came back.</li>
+      </ul>
+
+      <figure>
+        <div class="fig-scroll">
+          <svg class="dg" viewBox="0 0 960 214" role="img" aria-label="Text-to-SQL pipeline: the question and a schema built from Postgres comments go to the model, which writes SQL; SqlGuard either blocks it with a 400 before the database or passes it to a read-only execution; a database error loops back to the model once; the returned rows go to a second model call that writes the answer.">
+            <defs>
+              <marker id="m10" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk"/></marker>
+              <marker id="m10w" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk-warn"/></marker>
+            </defs>
+            <rect x="96" y="12" width="210" height="44" rx="7" class="nd-note"/>
+            <text x="201" y="30" text-anchor="middle" class="t-b">Schema from COMMENTs</text>
+            <text x="201" y="46" text-anchor="middle" class="t-sub">allowed tables · today's date</text>
+            <line x1="226" y1="56" x2="226" y2="78" class="ed" marker-end="url(#m10)"/>
+
+            <rect x="20" y="80" width="110" height="56" rx="7" class="nd"/>
+            <text x="75" y="104" text-anchor="middle" class="t-b">Question</text>
+            <text x="75" y="120" text-anchor="middle" class="t-sub">plain English</text>
+            <rect x="156" y="80" width="140" height="56" rx="7" class="nd-llm"/>
+            <text x="226" y="104" text-anchor="middle" class="t-b">Generate SQL</text>
+            <text x="226" y="120" text-anchor="middle" class="t-sub t-mono">entity(SqlQuery)</text>
+            <rect x="322" y="80" width="150" height="56" rx="7" class="nd-acc"/>
+            <text x="397" y="104" text-anchor="middle" class="t-b">SqlGuard</text>
+            <text x="397" y="120" text-anchor="middle" class="t-sub">JSqlParser checks</text>
+            <rect x="498" y="80" width="170" height="56" rx="7" class="nd"/>
+            <text x="583" y="104" text-anchor="middle" class="t-b">Execute</text>
+            <text x="583" y="120" text-anchor="middle" class="t-sub">read-only tx · 3 s timeout</text>
+            <rect x="694" y="80" width="130" height="56" rx="7" class="nd-llm"/>
+            <text x="759" y="104" text-anchor="middle" class="t-b">Explain</text>
+            <text x="759" y="120" text-anchor="middle" class="t-sub">only from the rows</text>
+            <rect x="846" y="80" width="94" height="56" rx="7" class="nd"/>
+            <text x="893" y="104" text-anchor="middle" class="t-b">Answer</text>
+            <text x="893" y="120" text-anchor="middle" class="t-sub">+ SQL + rows</text>
+            <line x1="130" y1="108" x2="154" y2="108" class="ed" marker-end="url(#m10)"/>
+            <line x1="296" y1="108" x2="320" y2="108" class="ed" marker-end="url(#m10)"/>
+            <line x1="472" y1="108" x2="496" y2="108" class="ed" marker-end="url(#m10)"/>
+            <line x1="668" y1="108" x2="692" y2="108" class="ed" marker-end="url(#m10)"/>
+            <line x1="824" y1="108" x2="844" y2="108" class="ed" marker-end="url(#m10)"/>
+
+            <rect x="336" y="12" width="122" height="44" rx="7" class="nd-warn"/>
+            <text x="397" y="30" text-anchor="middle" class="t-b t-warn">400 · blocked</text>
+            <text x="397" y="46" text-anchor="middle" class="t-sub">database never sees it</text>
+            <line x1="397" y1="80" x2="397" y2="58" class="ed-warn" marker-end="url(#m10w)"/>
+            <text x="404" y="72" class="t-sub t-warn">violation</text>
+
+            <path d="M583,136 V172 H226 V138" class="ed dash" marker-end="url(#m10)"/>
+            <text x="404" y="190" text-anchor="middle" class="t-sub">database error → the model repairs the query, once</text>
+          </svg>
+        </div>
+        <figcaption>The guard rejects anything but one <code>SELECT</code>, tables outside the allowlist and risky functions, and caps the rows. Even if it were bypassed, the read-only transaction would refuse a write.</figcaption>
+      </figure>
+
+      <h2>Behind the scenes</h2>
+      <ol class="steps">
+        <li><span>Flyway migration <code>V3__analytics_comments.sql</code> adds <code>COMMENT ON TABLE</code> and <code>COMMENT ON COLUMN</code> to <code>employee</code>, <code>asset</code> and <code>ticket</code>: what each holds, the allowed values of enum-like columns, and definitions such as "open work means status &lt;&gt; 'RESOLVED'". <code>SchemaCatalog</code> reads <code>information_schema</code> and the comments for the allowed tables only. The demo page shows the resulting schema text.</span></li>
+        <li><span><code>SqlAssistantService</code> asks for <code>SqlQuery(reasoning, sql)</code> with native structured output, as in demo 6. Today's date is in the prompt, so "last 7 days" becomes <code>now() - interval '7 days'</code>.</span></li>
+        <li><span><code>SqlGuard</code> parses the SQL with JSqlParser. It rejects anything other than exactly one <code>SELECT</code> (a <code>DELETE</code> is rule <code>not-a-select</code>), <code>SELECT … FOR UPDATE</code>, <code>SELECT INTO</code>, functions such as <code>pg_read_file</code>, <code>dblink</code> or <code>set_config</code>, and any table outside the allowlist; <code>TablesNamesFinder</code> also finds tables inside subqueries and CTEs. It adds <code>LIMIT 200</code> or lowers a larger limit. A violation is a <code>GuardrailViolationException</code>, so it becomes the same 400 problem detail as demo 2, plus the SQL the model wrote.</span></li>
+        <li><span>The query runs through <code>JdbcClient</code> in a read-only <code>TransactionTemplate</code> that also sets <code>SET TRANSACTION READ ONLY</code> and <code>SET LOCAL statement_timeout = '3s'</code>. A write that got past the guard would still fail with "cannot execute DELETE in a read-only transaction"; <code>TextToSqlIT</code> checks exactly that.</span></li>
+        <li><span>If Postgres rejects the query (a wrong column, a type mismatch), the error and the failed SQL go back to the model once. The UI shows both attempts.</span></li>
+        <li><span>A second, short call writes the answer from at most 50 result rows. The model never sees data it didn't query.</span></li>
+      </ol>
+      <h2>Design decisions and lessons</h2>
+      <ul class="notes">
+        <li>In production, step 4 would also use a dedicated read-only database role, ideally on a replica. The demo shares one connection pool, so the transaction settings do that job.</li>
+        <li>The allowlist matters as much as read-only access. "Show all rows of <code>spring_ai_chat_memory</code>" can't damage the database, but it would expose other people's conversations. The guard blocks it.</li>
+        <li>Models like <code>SELECT *</code> over joins. A joined result has several columns named <code>id</code> or <code>status</code>; keyed by name, later columns silently overwrote earlier ones and the table showed wrong values. Repeated names are now numbered (<code>status_2</code>).</li>
+        <li>Asked vaguely for "the chat memory table", the 4B model once avoided the forbidden table, joined the allowed ones instead and described the result as chat memory. A guard can stop forbidden access but can't make the answer honest, which is why the page always shows the SQL.</li>
+      </ul>
+      <h2>In the code</h2>
+      <ul class="files"><li><code>analytics/SqlAssistantService.java</code></li><li><code>analytics/SqlGuard.java</code></li><li><code>analytics/SchemaCatalog.java</code></li><li><code>db/migration/V3__analytics_comments.sql</code></li><li><code>test/…/SqlGuardTest.java</code></li><li><code>test/…/TextToSqlIT.java</code></li></ul>
+    </section>
+
+    <!-- ===================================================================== 11 -->
+    <section class="topic" id="s11">
+      <div class="pagehead">
+        <h1><span class="num">11</span> Semantic caching</h1>
+        <p class="usecase">Use case: employees ask the same policy questions in different words; repeats are answered from the cache.</p>
+        <a class="deeplink" href="/#cache">Open demo 11 →</a>
+      </div>
+
+      <h2>The idea</h2>
+      <p>LLM calls are slow and paid per token, and real traffic repeats itself: "How many leave days can I carry over?" arrives every week in a dozen phrasings. A normal cache keyed by the exact text misses all of them. A <b>semantic cache</b> keys on meaning. It embeds the question, looks for an earlier question whose embedding is close enough, and returns that answer without retrieval or a model call.</p>
+      <p>The design turns on one number, the <b>similarity threshold</b>. Too low, and a <i>different</i> question gets someone else's answer, which is worse than a slow answer. Too high, and genuine rewordings miss, so the cache saves little.</p>
+
+      <figure>
+        <div class="fig-scroll">
+          <svg class="dg" viewBox="0 0 960 246" role="img" aria-label="The cache advisor runs first: it embeds the question and finds the nearest cached question in the semantic_cache table. At similarity 0.95 or more it returns the cached answer without retrieval or a model call. Below that, the RAG pipeline and the model answer, and the new answer is stored. Ingesting or deleting a document clears the table.">
+            <defs>
+              <marker id="m11" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk"/></marker>
+              <marker id="m11a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk-acc"/></marker>
+            </defs>
+            <rect x="20" y="40" width="130" height="56" rx="7" class="nd"/>
+            <text x="85" y="64" text-anchor="middle" class="t-b">Question</text>
+            <text x="85" y="80" text-anchor="middle" class="t-sub">to the RAG demo</text>
+            <rect x="180" y="40" width="250" height="56" rx="7" class="nd-acc"/>
+            <text x="305" y="64" text-anchor="middle" class="t-b t-mono">SemanticCacheAdvisor</text>
+            <text x="305" y="80" text-anchor="middle" class="t-sub">first advisor · embed · nearest match</text>
+            <line x1="150" y1="68" x2="178" y2="68" class="ed" marker-end="url(#m11)"/>
+
+            <rect x="180" y="160" width="250" height="56" rx="7" class="nd"/>
+            <text x="305" y="184" text-anchor="middle" class="t-b t-mono">semantic_cache (pgvector)</text>
+            <text x="305" y="200" text-anchor="middle" class="t-sub">same feature, scope, model · &lt; 24 h</text>
+            <line x1="305" y1="98" x2="305" y2="158" class="ed" marker-start="url(#m11)" marker-end="url(#m11)"/>
+            <text x="313" y="132" class="t-sub">nearest question + similarity</text>
+
+            <rect x="520" y="40" width="220" height="56" rx="7" class="nd-acc"/>
+            <text x="630" y="64" text-anchor="middle" class="t-b">Cached answer + citations</text>
+            <text x="630" y="80" text-anchor="middle" class="t-sub">about 0.1 s · no tokens</text>
+            <line x1="430" y1="60" x2="518" y2="60" class="ed-acc" marker-end="url(#m11a)"/>
+            <text x="474" y="52" text-anchor="middle" class="t-sub t-acc">hit · ≥ 0.95</text>
+
+            <rect x="520" y="160" width="220" height="56" rx="7" class="nd-llm"/>
+            <text x="630" y="184" text-anchor="middle" class="t-b">RAG pipeline + model</text>
+            <text x="630" y="200" text-anchor="middle" class="t-sub">demo 3 · 4–5 s</text>
+            <path d="M430,82 H476 V176 H518" class="ed" marker-end="url(#m11)"/>
+            <text x="484" y="128" class="t-sub">miss</text>
+            <line x1="520" y1="206" x2="432" y2="206" class="ed dash" marker-end="url(#m11)"/>
+            <text x="476" y="232" text-anchor="middle" class="t-sub">store question + answer</text>
+
+            <rect x="790" y="40" width="150" height="56" rx="7" class="nd"/>
+            <text x="865" y="64" text-anchor="middle" class="t-b">Answer</text>
+            <text x="865" y="80" text-anchor="middle" class="t-sub">says hit or miss</text>
+            <line x1="740" y1="68" x2="788" y2="68" class="ed" marker-end="url(#m11)"/>
+            <path d="M740,188 H865 V98" class="ed" marker-end="url(#m11)"/>
+
+            <rect x="20" y="166" width="130" height="44" rx="7" class="nd-note"/>
+            <text x="85" y="185" text-anchor="middle" class="t-b">Document</text>
+            <text x="85" y="201" text-anchor="middle" class="t-sub">ingested or deleted</text>
+            <line x1="150" y1="188" x2="178" y2="188" class="ed-warn dash" marker-end="url(#m11)"/>
+            <text x="164" y="228" text-anchor="middle" class="t-sub t-warn">clears</text>
+          </svg>
+        </div>
+        <figcaption>On a hit, the advisor answers on its own: retrieval and the model call never run. The cached citations go back into the response context, so the page looks the same as for a live answer.</figcaption>
+      </figure>
+
+      <h2>Behind the scenes</h2>
+      <ol class="steps">
+        <li><span><code>SemanticCacheService</code> owns a second pgvector table, <code>semantic_cache</code>, built with <code>PgVectorStore.builder(...)</code> inside the service. Spring Boot's auto-configured store for the handbook stays as it is.</span></li>
+        <li><span>An entry's text is the question. Its metadata holds the answer, the citations as JSON, the feature, a scope, the model, <code>createdAt</code>, and the original latency and token count. Spring AI normally embeds the metadata along with the text, which made even an identical question score only 0.71, so each entry gets a content formatter that embeds the question alone.</span></li>
+        <li><span><code>SemanticCacheAdvisor</code> is a <code>CallAdvisor</code> at order −100, ahead of the RAG advisor (order 0) in <code>PolicyQaService</code>'s ChatClient. It searches for the single nearest entry, filtered on <code>feature</code>, <code>scope</code>, <code>model</code> and <code>createdAt</code> (the 24 h TTL).</span></li>
+        <li><span><b>Hit:</b> the advisor returns a response built from the cached answer and puts the cached citations back into the response context as <code>DOCUMENT_CONTEXT</code>, so <code>PolicyQaService</code> builds its citation list exactly as for a live answer. Retrieval and the model call never run.</span></li>
+        <li><span><b>Miss:</b> the advisor calls the rest of the chain, then stores the question, answer and citations. Either way the response carries a <code>CacheInfo</code>, which the RAG page shows as "served from semantic cache" or "cache miss".</span></li>
+        <li><span>The scope is the category filter plus top-k and threshold (<code>ALL|k=4|t=0.55</code>), so an answer retrieved under one filter is never served under another. The evaluation in demo 9 bypasses the cache; otherwise it would grade cached answers.</span></li>
+        <li><span><code>IngestionService</code> clears all RAG entries when a document is ingested or deleted, so an answer can't outlive its source.</span></li>
+        <li><span>Counters <code>acme.cache.lookups{feature, result}</code> and <code>acme.cache.tokens.saved</code> feed the Grafana panels for hit rate and tokens saved.</span></li>
+      </ol>
+
+      <h2>Choosing the threshold: measured, not guessed</h2>
+      <p>The cached question was "How many leave days can I carry over to next year?". With <code>nomic-embed-text</code>, these were the similarities of other questions to it:</p>
+      <div class="tablewrap"><table>
+        <thead><tr><th>Question</th><th>Same meaning?</th><th>Similarity</th><th>At 0.90</th><th>At 0.95</th></tr></thead>
+        <tbody>
+          <tr><td>…carry over <b>into</b> next year?</td><td>yes</td><td class="num">0.990</td><td><span class="pill ok">hit</span></td><td><span class="pill ok">hit</span></td></tr>
+          <tr><td>…carry <b>forward</b> to next year?</td><td>yes</td><td class="num">0.970</td><td><span class="pill ok">hit</span></td><td><span class="pill ok">hit</span></td></tr>
+          <tr><td>How many leave days can I <b>take</b> next year?</td><td><b>no</b></td><td class="num">0.936</td><td><span class="pill bad">wrong answer</span></td><td><span class="pill ok">miss</span></td></tr>
+          <tr><td>How many <b>vacation</b> days can I carry over…?</td><td>yes</td><td class="num">0.911</td><td><span class="pill ok">hit</span></td><td><span class="pill warn">miss</span></td></tr>
+          <tr><td>How many sick days are fully paid?</td><td>no</td><td class="num">0.684</td><td><span class="pill ok">miss</span></td><td><span class="pill ok">miss</span></td></tr>
+        </tbody>
+      </table></div>
+      <p>At 0.90 the near miss (same words, different question) gets the carry-over answer. The default of 0.95 gives up the synonym to keep answers correct. The cache page has a slider that replays this table at any threshold.</p>
+
+      <h2>Design decisions and lessons</h2>
+      <ul class="notes">
+        <li>Only stateless answers are cached. Chat with memory, helpdesk actions and anything personal or permission-dependent must never come from a shared cache, so the advisor is attached to the RAG feature only.</li>
+        <li>Thresholds belong to an embedding model. A different model (for example <code>text-embedding-3-small</code>) gives different numbers, so measure again after switching.</li>
+        <li>A semantic cache pays off on expensive, repetitive traffic such as FAQs, policy questions and support. For one-off questions it only adds an embedding call.</li>
+        <li>Providers' <i>prompt caching</i> is a different tool. It reuses the processing of an identical prompt prefix and makes every call with the same system prompt cheaper, but it still calls the model; a semantic cache skips the call.</li>
+      </ul>
+      <h2>In the code</h2>
+      <ul class="files"><li><code>cache/SemanticCacheService.java</code></li><li><code>cache/SemanticCacheAdvisor.java</code></li><li><code>cache/CacheController.java</code></li><li><code>rag/PolicyQaService.java</code></li><li><code>rag/IngestionService.java</code></li><li><code>test/…/SemanticCacheAdvisorTest.java</code></li><li><code>test/…/SemanticCacheIT.java</code></li></ul>
+    </section>
+
+    <!-- ===================================================================== 12 -->
+    <section class="topic" id="s12">
+      <div class="pagehead">
+        <h1><span class="num">12</span> Multi-agent systems with A2A</h1>
+        <p class="usecase">Use case: the helpdesk agent asks the procurement team's agent to buy a replacement laptop.</p>
+        <a class="deeplink" href="/#a2a">Open demo 12 →</a>
+      </div>
+
+      <h2>The idea</h2>
+      <p>A large company won't run one giant agent. Each team builds agents for its own domain, with its own tools, data, model and release cycle, and those agents need to work together across team boundaries. <b>A2A (Agent2Agent)</b> is an open protocol for that. Google started it in April 2025, and it is now developed under the Linux Foundation. It complements MCP:</p>
+      <div class="tablewrap"><table>
+        <thead><tr><th></th><th>MCP (demo 7)</th><th>A2A (this demo)</th></tr></thead>
+        <tbody>
+          <tr><td>Connects</td><td>an AI app to <b>tools and data</b></td><td>an agent to <b>another agent</b></td></tr>
+          <tr><td>Who decides</td><td>the caller's model picks every tool call</td><td>the remote agent plans and acts on its own</td></tr>
+          <tr><td>On the wire</td><td>tool schemas, arguments, results</td><td>a message in, a <b>task</b> out</td></tr>
+          <tr><td>The caller sees</td><td>every tool</td><td>only the agent card; prompt, tools and model stay private</td></tr>
+        </tbody>
+      </table></div>
+      <ul class="notes">
+        <li><b>Agent card.</b> A JSON document at <code>/.well-known/agent-card.json</code> with the agent's name, endpoint, transport, capabilities and <b>skills</b> with examples. This is how agents find each other.</li>
+        <li><b>Message.</b> What a caller sends, made of <b>parts</b>: text, files or structured data.</li>
+        <li><b>Task.</b> The unit of work, with a lifecycle: <code>submitted → working → completed</code>, or <code>input-required</code>, <code>failed</code>, <code>rejected</code>, <code>canceled</code>. Its <b>history</b> records the status messages and its <b>artifacts</b> carry the results.</li>
+        <li><b>Transport.</b> JSON-RPC 2.0 over HTTP (<code>message/send</code>, <code>tasks/get</code>, <code>tasks/cancel</code>), with optional streaming and push notifications.</li>
+      </ul>
+
+      <figure>
+        <div class="fig-scroll">
+          <svg class="dg" viewBox="0 0 960 320" role="img" aria-label="In ai-app, the helpdesk agent proposes a purchase, a human approves it, and ProcurementAgentClient first reads the procurement agent's card, then sends message/send. In procurement-agent, the executor runs a tool-calling agent with its own model and two tools, and returns a task with state, history and artifacts.">
+            <defs>
+              <marker id="m12" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk"/></marker>
+              <marker id="m12a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk-acc"/></marker>
+            </defs>
+            <rect x="20" y="24" width="300" height="286" rx="10" class="grp"/>
+            <text x="36" y="46" class="t-b">ai-app :8080</text>
+            <rect x="40" y="62" width="260" height="48" rx="7" class="nd-llm"/>
+            <text x="170" y="82" text-anchor="middle" class="t-b">Helpdesk agent (demo 4)</text>
+            <text x="170" y="98" text-anchor="middle" class="t-sub t-mono">requestHardwarePurchase</text>
+            <rect x="40" y="132" width="260" height="42" rx="7" class="nd-note"/>
+            <text x="170" y="150" text-anchor="middle" class="t-b">Human approval</text>
+            <text x="170" y="165" text-anchor="middle" class="t-sub">it spends budget</text>
+            <rect x="40" y="196" width="260" height="98" rx="7" class="nd-acc"/>
+            <text x="170" y="236" text-anchor="middle" class="t-b t-mono">ProcurementAgentClient</text>
+            <text x="170" y="254" text-anchor="middle" class="t-sub">A2A Java SDK · JSONRPCTransport</text>
+            <line x1="170" y1="110" x2="170" y2="130" class="ed" marker-end="url(#m12)"/>
+            <line x1="170" y1="174" x2="170" y2="194" class="ed" marker-end="url(#m12)"/>
+
+            <line x1="300" y1="210" x2="618" y2="210" class="ed" marker-end="url(#m12)"/>
+            <text x="460" y="202" text-anchor="middle" class="t-sub">① GET /.well-known/agent-card.json</text>
+            <line x1="300" y1="258" x2="618" y2="258" class="ed-acc" marker-end="url(#m12a)"/>
+            <text x="460" y="250" text-anchor="middle" class="t-sub t-acc t-mono">② POST /  message/send</text>
+            <line x1="620" y1="280" x2="302" y2="280" class="ed-acc dash" marker-end="url(#m12a)"/>
+            <text x="460" y="298" text-anchor="middle" class="t-sub t-acc">task: state · history · artifacts</text>
+
+            <rect x="600" y="24" width="340" height="286" rx="10" class="grp"/>
+            <text x="616" y="46" class="t-b">procurement-agent :8082</text>
+            <rect x="620" y="58" width="144" height="44" rx="7" class="nd"/>
+            <text x="692" y="78" text-anchor="middle" class="t-b t-mono">searchCatalog</text>
+            <text x="692" y="93" text-anchor="middle" class="t-sub">who each item is for</text>
+            <rect x="776" y="58" width="144" height="44" rx="7" class="nd"/>
+            <text x="848" y="78" text-anchor="middle" class="t-b t-mono">createPurchaseRequest</text>
+            <text x="848" y="93" text-anchor="middle" class="t-sub">budget checked in code</text>
+            <rect x="620" y="126" width="300" height="44" rx="7" class="nd-llm"/>
+            <text x="770" y="145" text-anchor="middle" class="t-b">Tool-calling agent</text>
+            <text x="770" y="161" text-anchor="middle" class="t-sub">its own prompt and model</text>
+            <line x1="692" y1="126" x2="692" y2="104" class="ed" marker-end="url(#m12)"/>
+            <line x1="848" y1="126" x2="848" y2="104" class="ed" marker-end="url(#m12)"/>
+            <rect x="620" y="190" width="150" height="40" rx="7" class="nd"/>
+            <text x="695" y="208" text-anchor="middle" class="t-b">AgentCard</text>
+            <text x="695" y="223" text-anchor="middle" class="t-sub">skill: hardware-purchase</text>
+            <rect x="620" y="240" width="300" height="54" rx="7" class="nd-acc"/>
+            <text x="770" y="262" text-anchor="middle" class="t-b t-mono">ProcurementAgentExecutor</text>
+            <text x="770" y="279" text-anchor="middle" class="t-sub">submitted → working → completed · input-required</text>
+            <line x1="850" y1="240" x2="850" y2="172" class="ed" marker-end="url(#m12)"/>
+          </svg>
+        </div>
+        <figcaption>The helpdesk agent only ever sees the card and the task. Which tools, prompt and model the procurement agent uses is the procurement team's business, and they can change it without telling anyone.</figcaption>
+      </figure>
+
+      <h2>Behind the scenes · the procurement agent</h2>
+      <ol class="steps">
+        <li><span><code>procurement-agent</code> is a separate Spring Boot app with <code>spring-ai-a2a-server-autoconfigure</code>. It needs two beans: an <code>AgentCard</code> (in <code>AgentConfig</code>) and an <code>AgentExecutor</code> (<code>ProcurementAgentExecutor</code>). The library serves the card, accepts <code>message/send</code> at <code>/</code> and keeps tasks in memory.</span></li>
+        <li><span>The A2A SDK calls <code>execute</code> for every message. The executor marks the task <code>submitted</code> and checks, in code, that the caller named the paying department. If not, the task stops in <b><code>input-required</code></b> with a question, before any model call. The caller answers with another <code>message/send</code> that carries the same <code>taskId</code>, and the executor runs again with the task history.</span></li>
+        <li><span>Then an ordinary Spring AI tool-calling agent runs with two tools. <code>searchCatalog</code> lists the approved hardware and who each item is for. <code>createPurchaseRequest</code> computes the total, checks the department's quarterly budget, and either raises the request or refuses with the numbers. Every step publishes a <code>working</code> status message, which gives the caller a timeline in <code>task.history</code>.</span></li>
+        <li><span>The result is two <b>artifacts</b>: a text summary and, when a request was raised, a <b>data part</b> with the purchase request as JSON, so the calling agent doesn't have to parse prose. The summary is written from the ledger, not taken from the model's reply (see the lessons below).</span></li>
+      </ol>
+      <h2>Behind the scenes · the helpdesk side</h2>
+      <ol class="steps">
+        <li><span>The helpdesk agent has a new tool, <code>requestHardwarePurchase(username, need)</code>, marked <code>@RequiresApproval</code> like the password reset in demo 4. The agent proposes it, a human approves, and only then does it run.</span></li>
+        <li><span>The tool looks up the employee's department and calls <code>ProcurementAgentClient</code>, which uses the official A2A Java SDK. The client reads the agent card on first use, so ai-app starts without the other agent, and sends a blocking <code>message/send</code> through the SDK's <code>JSONRPCTransport</code>.</span></li>
+        <li><span>The task's summary and data go back to the helpdesk model as the tool result, and the helpdesk agent answers the user. A small wire tap around the SDK's HTTP client keeps the raw JSON-RPC request and response for the demo page.</span></li>
+        <li><span>If the procurement agent is down, the A2A page gets a 503 problem detail with a hint to start it, and the helpdesk tool tells its model that nothing was ordered.</span></li>
+      </ol>
+      <h2>Design decisions and lessons</h2>
+      <div class="panel warn"><p>Getting a 4B local model to run this flow reliably taught the central lesson of agent-to-agent work: <b>whatever other agents rely on must be enforced in code, not requested in the prompt.</b></p></div>
+      <ul class="notes">
+        <li>Asked to "order a laptop for tchen", the model made up a paying department and raised a request. The department is now checked in code before the model runs, and a missing one becomes <code>input-required</code>.</li>
+        <li>It computed 3 × 1350 EUR as 3000 EUR, and with a separate <code>checkBudget</code> tool it sometimes stopped after the check. The total and the budget rule now live inside <code>createPurchaseRequest</code>.</li>
+        <li>Its summaries misquoted totals and once announced "PR-7892 pending approval" when nothing had been raised. Other agents act on that text, so the summary is now built from the ledger, and a reply that claims a purchase request the ledger doesn't have is discarded.</li>
+        <li>Once it searched the catalog ten times in a row. The tool result now says what to do next and notices repeats.</li>
+        <li>The helpdesk agent sees none of this, which is the point of A2A: the procurement team can change its prompt, tools or model without the helpdesk team noticing, as long as the card and the task format stay the same.</li>
+        <li>Production A2A also needs authentication (the agent card declares security schemes such as OAuth 2 or API keys), durable task storage instead of memory, and streaming or push notifications for long-running tasks.</li>
+      </ul>
+      <h2>In the code</h2>
+      <ul class="files"><li><code>procurement-agent/…/ProcurementAgentExecutor.java</code></li><li><code>procurement-agent/…/ProcurementTools.java</code></li><li><code>procurement-agent/…/AgentConfig.java</code></li><li><code>ai-app/…/a2a/ProcurementAgentClient.java</code></li><li><code>ai-app/…/helpdesk/HelpdeskTools.java</code></li><li><code>procurement-agent/test/…/A2AProtocolTest.java</code></li></ul>
     </section>
   </main>
 </div>

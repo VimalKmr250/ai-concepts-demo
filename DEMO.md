@@ -2,7 +2,7 @@
 
 This is a click-by-click walkthrough for presenting the showcase.
 
-**Setup:** start both apps as described in the [README](README.md), then open http://localhost:8080. Every demo page has **Try** buttons with prepared inputs, and the same calls are in [http/requests.http](http/requests.http).
+**Setup:** start the apps as described in the [README](README.md) (ai-app, mcp-server for demo 7, procurement-agent for demo 12), then open http://localhost:8080. Every demo page has **Try** buttons with prepared inputs, and the same calls are in [http/requests.http](http/requests.http).
 
 **Timing:** the times below are for qwen3-4b on a 4 GB laptop GPU. Hosted models are much faster.
 
@@ -112,6 +112,7 @@ Stop `mcp-server` and ask again: you get a clean HTTP 503 with a hint, and the r
    - tokens by model
    - model-call versus vector-search latency
    - request outcomes per feature (success, blocked, approval pending, error)
+   - semantic cache hit rate, tokens saved and lookups (demo 11)
    - recent traces
 4. Click a trace (for example `http post /api/helpdesk/chat`). The span tree shows *HTTP → ChatClient → advisors → `acme helpdesk` → model calls and `execute_tool` spans*. For the parallel agent, the four model calls overlap.
 
@@ -130,3 +131,50 @@ Stop `mcp-server` and ask again: you get a clean HTTP 503 with a hint, and the r
    It prints the scorecard in the console and fails the build below 80%.
 
 **Point out:** the evaluators are Spring AI's `RelevancyEvaluator` and `FactCheckingEvaluator`. A small "verdict normalizer" advisor makes them robust with chatty small models.
+
+## 10 · Text-to-SQL (about 3 min)
+
+**Story:** IT managers ask the helpdesk database questions in plain English, and nothing they type can change or leak data.
+
+| Try button | Expected result |
+|---|---|
+| **Open tickets per priority** | A count per priority, the generated `GROUP BY` query, guard pills (`single SELECT`, `tables allowed: [ticket]`, `added LIMIT 200`) and a one-line answer. |
+| **Out-of-warranty laptops** | LAP-1877 (Alice Smith), LAP-1502 (Miguel Garcia), LAP-1950 (Olu Adeyemi), via a join on `employee` with `warranty_until < CURRENT_DATE`. |
+| **Tickets per department (7 days)** | Counts per department from a `ticket` ⋈ `employee` join, using today's date. |
+| **Blocked: delete** | Red **BLOCKED · sql-guard**, rule `not-a-select`, with the `DELETE` the model wrote. HTTP 400; the database never sees it. |
+| **Blocked: other table** | Rule `table-not-allowed` for `spring_ai_chat_memory`. Reading it wouldn't harm the database, but it would expose other people's chats. |
+
+Open **The schema description the model receives** to show the business definitions that come from Postgres `COMMENT`s.
+
+**Point out:** three independent layers: the prompt asks for a SELECT, the JSqlParser guard enforces it on the parsed query, and the read-only transaction would refuse a write anyway (`TextToSqlIT` proves the last one with the guard bypassed).
+
+## 11 · Semantic caching (about 2 min)
+
+**Story:** employees ask the same policy questions in different words. Repeats come from the cache: no retrieval, no model call, no tokens.
+
+1. Click **Run the paraphrase test**. It clears the cache, then:
+   - asks *"How many leave days can I carry over to next year?"* for real: **cache miss**, about 4–5 s;
+   - asks it again: **served from semantic cache**, similarity 1.000, about 0.1 s, with the saved time and tokens;
+   - probes five rewordings without calling the model.
+2. At the default threshold **0.95**: *carry forward* (0.97) and *carry over into* (0.99) hit; *vacation days* (0.91, same meaning) misses; *take next year* (0.94, a different question) correctly misses.
+3. Drag the **What if the threshold were** slider to **0.90**: *vacation days* turns into a hit, but *take next year* turns red, **WRONG answer served**. That is the trade-off behind the default.
+4. On **3 RAG with citations**, ask the leave question again: the answer shows **served from semantic cache**. Reloading the sample handbook clears the cache, and the next ask is a miss again.
+
+**Point out:** only the stateless RAG feature is cached; entries are separated by category filter, retrieval settings and model, and expire after 24 h. Grafana shows the hit rate and tokens saved.
+
+## 12 · Multi-agent with A2A (about 4 min)
+
+**Story:** buying hardware is the procurement team's job, and they have their own AI agent. The helpdesk agent asks it over the A2A protocol instead of doing it itself.
+
+Start `procurement-agent` first (port 8082). Its budgets live in memory, so restart it to reset them before a demo.
+
+1. **Agent card (discovered)** shows what ai-app read from `http://localhost:8082/.well-known/agent-card.json`: name, endpoint, JSON-RPC transport, and the `hardware-purchase` skill with examples.
+2. Click **Replacement laptop**. The task comes back **completed** with a timeline (*submitted → Searching the catalog → Checking the Engineering budget for 1 x LAP-STD-14 = 1350 EUR → Raised PR-31xx*) and two artifacts: a text summary and the purchase request as data. Open the JSON-RPC request and response to show the wire format.
+3. **Developer laptop (finance approval)**: the agent picks the Dell Precision for someone who runs local AI models; 2450 EUR is over the 2000 EUR limit, so the PR is `PENDING_FINANCE_APPROVAL`.
+4. **Over budget**: 3 laptops for HR cost 4050 EUR with 1500 EUR left. Nothing is raised, and the summary gives the numbers.
+5. **Missing department (input-required)**: the task stops in **input-required** in under a second, asking which department pays. Click **Answer** ("Marketing pays"): the *same task* continues and completes.
+6. **Full flow:** click **Report LAP-1502 broken and ask for a replacement**. The helpdesk agent (demo 4) proposes `requestHardwarePurchase` and waits for approval. Click **Approve**: the helpdesk tool calls the procurement agent over A2A, the PR number comes back into the helpdesk agent's answer, and the procurement task appears below it.
+
+Stop `procurement-agent` and send a message: the page shows HTTP 503 with a hint to start it.
+
+**Point out:** the helpdesk agent never sees the procurement agent's prompt, tools or model, only the card and the task. And the facts other agents rely on (which department pays, the total, the budget check, the PR number) are enforced in code, because the 4B model got each of them wrong at least once while this demo was built.

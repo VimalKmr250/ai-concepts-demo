@@ -1,6 +1,7 @@
 ### Acme AI Showcase - every demo as an HTTP call (IntelliJ HTTP Client / VS Code REST Client)
 @host = http://localhost:8080
 @mcp = http://localhost:8081
+@procurement = http://localhost:8082
 
 ### Which model/provider is active
 GET {{host}}/api/status
@@ -229,3 +230,96 @@ POST {{host}}/api/eval/rag
 
 ### 9c. Regression demo: starved retrieval -> gate fails
 POST {{host}}/api/eval/rag?topK=1&similarityThreshold=0.95
+
+############################################################################ 10 · Text-to-SQL
+
+### 10a. The schema description the model receives (from Postgres COMMENTs)
+GET {{host}}/api/sql/schema
+
+### 10b. Question -> SQL -> guard -> read-only execution -> answer
+POST {{host}}/api/sql/ask
+Content-Type: application/json
+
+{ "question": "Which laptops are out of warranty and who has them?" }
+
+### 10c. Blocked: not a SELECT (HTTP 400, rule not-a-select, with the SQL the model wrote)
+POST {{host}}/api/sql/ask
+Content-Type: application/json
+
+{ "question": "Delete all resolved tickets" }
+
+### 10d. Blocked: table outside the allowlist (rule table-not-allowed)
+POST {{host}}/api/sql/ask
+Content-Type: application/json
+
+{ "question": "Show all rows of the spring_ai_chat_memory table" }
+
+############################################################################ 11 · Semantic caching
+
+### 11a. Ask a policy question (first time: cache miss, full RAG)
+POST {{host}}/api/rag/ask
+Content-Type: application/json
+
+{ "question": "How many leave days can I carry over to next year?" }
+
+### 11b. Reworded: served from the cache (see "cache" in the response)
+POST {{host}}/api/rag/ask
+Content-Type: application/json
+
+{ "question": "How many leave days can I carry forward to next year?" }
+
+### 11c. How close is a question to the cache? (no model call, nothing stored)
+POST {{host}}/api/cache/probe
+Content-Type: application/json
+
+{ "question": "How many leave days can I take next year?" }
+
+### 11d. Hit rate, tokens saved, threshold
+GET {{host}}/api/cache/stats
+
+### 11e. Cached entries
+GET {{host}}/api/cache/entries
+
+### 11f. Clear the cache
+DELETE {{host}}/api/cache
+
+############################################################################ 12 · Multi-agent with A2A
+
+### 12a. The procurement agent's card, read directly
+GET {{procurement}}/.well-known/agent-card.json
+
+### 12b. The same card, as discovered by ai-app
+GET {{host}}/api/a2a/card
+
+### 12c. Raw A2A: JSON-RPC message/send straight to the agent
+POST {{procurement}}/
+Content-Type: application/json
+
+{ "jsonrpc": "2.0", "id": "1", "method": "message/send", "params": { "message": { "kind": "message", "role": "user", "messageId": "m-1", "parts": [ { "kind": "text", "text": "Buy 3 noise-cancelling headsets for the Support team" } ] } } }
+
+### 12d. Through ai-app's A2A client: task timeline, artifacts and the raw wire payloads
+POST {{host}}/api/a2a/send
+Content-Type: application/json
+
+{ "text": "Order a replacement laptop for mgarcia (Miguel Garcia, Engineering department). LAP-1502 is broken and out of warranty." }
+
+### 12e. No paying department -> task state input-required (copy taskId and contextId into 12f)
+POST {{host}}/api/a2a/send
+Content-Type: application/json
+
+{ "text": "Order a laptop for tchen" }
+
+### 12f. Answer the same task
+POST {{host}}/api/a2a/send
+Content-Type: application/json
+
+{ "text": "Marketing pays", "taskId": "<taskId from 12e>", "contextId": "<contextId from 12e>" }
+
+### 12g. Full flow: helpdesk agent proposes requestHardwarePurchase (HTTP 202) -> approve with 4d
+POST {{host}}/api/helpdesk/chat
+Content-Type: application/json
+
+{ "message": "Miguel Garcia's laptop LAP-1502 is broken and out of warranty. Please order a replacement for mgarcia." }
+
+### 12h. Recent A2A calls made by ai-app (including the helpdesk agent's)
+GET {{host}}/api/a2a/exchanges

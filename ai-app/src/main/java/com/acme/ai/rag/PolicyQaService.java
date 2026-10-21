@@ -17,6 +17,9 @@ import org.springframework.ai.rag.retrieval.search.VectorStoreDocumentRetriever;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.stereotype.Service;
 
+import com.acme.ai.cache.SemanticCacheAdvisor;
+import com.acme.ai.cache.SemanticCacheService;
+import com.acme.ai.cache.SemanticCacheService.CacheInfo;
 import com.acme.ai.config.AcmeProperties;
 import com.acme.ai.config.AiClients;
 
@@ -61,25 +64,32 @@ public class PolicyQaService {
 
 	private final List<QueryTransformer> queryTransformers = new ArrayList<>();
 
-	public PolicyQaService(AiClients aiClients, VectorStore vectorStore, AcmeProperties properties) {
+	public PolicyQaService(AiClients aiClients, VectorStore vectorStore, AcmeProperties properties,
+			SemanticCacheService cache) {
 		this.config = properties.rag();
 		this.vectorStore = vectorStore;
 		if (this.config.rewriteQuery()) {
 			this.queryTransformers
 				.add(RewriteQueryTransformer.builder().chatClientBuilder(aiClients.forFeature("rag-rewrite")).build());
 		}
-		this.chatClient = aiClients.forFeature("rag").build();
+		// demo 11: repeated questions are answered from the semantic cache before retrieval runs
+		this.chatClient = aiClients.forFeature("rag").defaultAdvisors(new SemanticCacheAdvisor(cache, "rag")).build();
 	}
 
 	public Answer ask(String question, Category category) {
-		return ask(question, category, this.config.topK(), this.config.similarityThreshold()).answer();
+		return ask(question, category, this.config.topK(), this.config.similarityThreshold(), true).answer();
 	}
 
 	/**
-	 * Answers with explicit retrieval settings (used by the evaluation demo to show how bad
-	 * settings degrade quality) and returns the retrieved documents for grading.
+	 * Answers with explicit retrieval settings and without the cache (used by the evaluation
+	 * demo, which must measure the real pipeline) and returns the retrieved documents for grading.
 	 */
 	public AnswerWithContext ask(String question, Category category, int topK, double similarityThreshold) {
+		return ask(question, category, topK, similarityThreshold, false);
+	}
+
+	private AnswerWithContext ask(String question, Category category, int topK, double similarityThreshold,
+			boolean useCache) {
 		ChatClientResponse response = this.chatClient.prompt()
 			.user(question)
 			.advisors(ragAdvisor(topK, similarityThreshold))
@@ -87,6 +97,9 @@ public class PolicyQaService {
 				if (category != null) {
 					a.param(VectorStoreDocumentRetriever.FILTER_EXPRESSION, "category == '" + category.name() + "'");
 				}
+				// answers are only reused for the same filter and retrieval settings
+				a.param(SemanticCacheAdvisor.SCOPE, cacheScope(category, topK, similarityThreshold));
+				a.param(SemanticCacheAdvisor.BYPASS, !useCache);
 			})
 			.call()
 			.chatClientResponse();
@@ -99,7 +112,17 @@ public class PolicyQaService {
 		List<Citation> citations = IntStream.range(0, documents.size())
 			.mapToObj(i -> Citation.of(i + 1, documents.get(i), answer.contains("[" + (i + 1) + "]")))
 			.toList();
-		return new AnswerWithContext(new Answer(answer, citations), documents);
+		CacheInfo cache = (CacheInfo) response.context().get(SemanticCacheAdvisor.CTX_CACHE);
+		return new AnswerWithContext(new Answer(answer, citations, cache), documents);
+	}
+
+	/** Cache scope of the default settings, for probing the cache without asking. */
+	public String defaultCacheScope(Category category) {
+		return cacheScope(category, this.config.topK(), this.config.similarityThreshold());
+	}
+
+	private static String cacheScope(Category category, int topK, double similarityThreshold) {
+		return (category == null ? "ALL" : category.name()) + "|k=" + topK + "|t=" + similarityThreshold;
 	}
 
 	private RetrievalAugmentationAdvisor ragAdvisor(int topK, double similarityThreshold) {
@@ -128,7 +151,10 @@ public class PolicyQaService {
 			.collect(Collectors.joining("\n\n"));
 	}
 
-	public record Answer(String answer, List<Citation> citations) {
+	/**
+	 * @param cache whether the semantic cache answered (null when the cache was bypassed)
+	 */
+	public record Answer(String answer, List<Citation> citations, CacheInfo cache) {
 	}
 
 	/**

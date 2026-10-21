@@ -117,6 +117,17 @@ acme:
     evaluator-max-rounds: 3
   evaluation:
     min-pass-rate: 0.8                 # RAG quality gate threshold (demo 9)
+  cache:
+    enabled: true
+    similarity-threshold: 0.95         # how close a question must be to reuse an answer (demo 11); see DEMO.md
+    ttl: 24h
+  sql:
+    allowed-tables: employee, asset, ticket   # Text-to-SQL may read only these (demo 10)
+    max-rows: 200
+    timeout-seconds: 3
+  a2a:
+    # the procurement team's agent (demo 12); its agent card is read from /.well-known/agent-card.json
+    procurement-url: ${PROCUREMENT_AGENT_URL:http://localhost:8082}
 
 logging:
   level:

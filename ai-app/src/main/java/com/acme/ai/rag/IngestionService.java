@@ -21,6 +21,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.acme.ai.cache.SemanticCacheService;
 import com.acme.ai.config.ApiExceptionHandler.NotFoundException;
 
 /**
@@ -40,15 +41,18 @@ public class IngestionService {
 
 	private final JdbcClient jdbc;
 
+	private final SemanticCacheService cache;
+
 	// small chunks keep each retrieved excerpt focused on one rule; tune per corpus
 	private final TokenTextSplitter splitter = TokenTextSplitter.builder()
 		.withChunkSize(180)
 		.withMinChunkSizeChars(100)
 		.build();
 
-	public IngestionService(VectorStore vectorStore, JdbcClient jdbc) {
+	public IngestionService(VectorStore vectorStore, JdbcClient jdbc, SemanticCacheService cache) {
 		this.vectorStore = vectorStore;
 		this.jdbc = jdbc;
+		this.cache = cache;
 	}
 
 	/**
@@ -92,6 +96,8 @@ public class IngestionService {
 			.param("chunks", chunks.size())
 			.update();
 		log.info("Ingested {} ({}) as {} chunks", source, category, chunks.size());
+		// cached answers may be based on the old content, so they must go
+		this.cache.invalidate("rag");
 		return new IngestResult(source, category, chunks.size(), false);
 	}
 
@@ -116,6 +122,7 @@ public class IngestionService {
 			.orElseThrow(() -> new NotFoundException("No document with id " + id));
 		deleteChunks(source);
 		this.jdbc.sql("DELETE FROM kb_document WHERE id = ?").param(id).update();
+		this.cache.invalidate("rag");
 	}
 
 	private void deleteChunks(String source) {

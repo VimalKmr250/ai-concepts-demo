@@ -8,6 +8,10 @@ import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
 
+import com.acme.ai.a2a.ProcurementAgentClient;
+import com.acme.ai.a2a.ProcurementAgentClient.AgentCallException;
+import com.acme.ai.a2a.ProcurementAgentClient.TaskView;
+import com.acme.ai.config.ApiExceptionHandler.ServiceUnavailableException;
 import com.acme.ai.helpdesk.HelpdeskRepository.Asset;
 import com.acme.ai.helpdesk.HelpdeskRepository.Employee;
 import com.acme.ai.helpdesk.HelpdeskRepository.Ticket;
@@ -25,8 +29,11 @@ public class HelpdeskTools {
 
 	private final HelpdeskRepository repository;
 
-	public HelpdeskTools(HelpdeskRepository repository) {
+	private final ProcurementAgentClient procurement;
+
+	public HelpdeskTools(HelpdeskRepository repository, ProcurementAgentClient procurement) {
 		this.repository = repository;
+		this.procurement = procurement;
 	}
 
 	@Tool(description = "Look up an Acme employee by username (e.g. 'jdoe'). Returns name, email, department, location and manager.")
@@ -86,6 +93,36 @@ public class HelpdeskTools {
 		this.repository.audit("helpdesk-agent", "ASSIGN_LOANER", spare.assetTag() + " -> " + employee.username());
 		return "Loaner laptop %s (%s) assigned to %s; pick it up at the %s IT desk.".formatted(spare.assetTag(),
 				spare.model(), employee.fullName(), employee.location());
+	}
+
+	/**
+	 * Multi-agent (demo 12): buying hardware is the procurement team's job, so this tool delegates
+	 * to their agent over A2A instead of doing it here. The helpdesk model only sees the result.
+	 */
+	@Tool(description = "Ask the procurement agent (another team's AI agent) to buy new hardware for an employee, "
+			+ "e.g. a replacement for a broken laptop that is out of warranty. Sensitive: spends budget, requires "
+			+ "human approval before it runs.")
+	@RequiresApproval("Spends department budget through the procurement agent")
+	public String requestHardwarePurchase(@ToolParam(description = "Employee username") String username,
+			@ToolParam(description = "What is needed and why, e.g. 'replacement laptop: LAP-1502 is broken and out of warranty'") String need) {
+		Employee employee = lookupEmployee(username);
+		String request = "Order for %s (username %s), %s department pays. Need: %s".formatted(employee.fullName(),
+				employee.username(), employee.department(), need);
+		TaskView task;
+		try {
+			task = this.procurement.send(request, null, null, "helpdesk agent").task();
+		}
+		catch (ServiceUnavailableException | AgentCallException ex) {
+			return "The procurement agent could not be reached (" + ex.getMessage() + "). Nothing was ordered.";
+		}
+		this.repository.audit("helpdesk-agent", "A2A_PURCHASE_REQUEST",
+				employee.username() + ": task " + task.id() + " " + task.state());
+		if (task.waitingForInput()) {
+			return "The procurement agent needs more information before ordering: " + task.statusMessage()
+					+ " Nothing was ordered yet.";
+		}
+		return "Procurement agent task %s finished with state %s. %s Purchase request data: %s".formatted(task.id(),
+				task.state(), task.summary(), task.data());
 	}
 
 	private static String normalize(String value, Set<String> allowed, String fallback) {

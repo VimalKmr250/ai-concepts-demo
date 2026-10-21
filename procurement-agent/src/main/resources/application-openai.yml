@@ -1,0 +1,15 @@
+# Hosted OpenAI (or any OpenAI-compatible provider):
+#   OPENAI_API_KEY=sk-...  OPENAI_CHAT_MODEL=<model id>  ./mvnw -pl procurement-agent spring-boot:run -Dspring-boot.run.profiles=openai
+spring:
+  ai:
+    openai:
+      base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+      api-key: ${OPENAI_API_KEY}
+      timeout: 60s
+      max-retries: 3
+      chat:
+        model: ${OPENAI_CHAT_MODEL}
+
+acme:
+  llm:
+    system-prompt-suffix: ""

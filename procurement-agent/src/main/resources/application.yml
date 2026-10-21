@@ -1,0 +1,50 @@
+server:
+  port: 8082
+
+spring:
+  application:
+    name: acme-procurement-agent
+  threads:
+    virtual:
+      enabled: true
+  ai:
+    # Same model settings as ai-app: LM Studio by default, hosted OpenAI with the openai profile.
+    # In a real company this agent would be another team's service, possibly on another model.
+    openai:
+      base-url: ${LLM_BASE_URL:http://localhost:1234/v1}
+      api-key: ${LLM_API_KEY:lm-studio}
+      timeout: 180s
+      max-retries: 1
+      chat:
+        model: ${CHAT_MODEL:qwen3-4b}
+        temperature: 0.2
+    model:
+      # this agent only chats; don't create the other OpenAI clients
+      embedding: none
+      image: none
+      audio:
+        speech: none
+        transcription: none
+      moderation: none
+
+# A2A SDK settings (read from the Spring environment). A local model with three tool calls can
+# take longer than the SDK's 30 s default for a blocking message/send.
+a2a:
+  blocking:
+    agent:
+      timeout:
+        seconds: 150
+
+acme:
+  agent:
+    # the URL other agents use; it is published in the agent card
+    public-url: ${PROCUREMENT_PUBLIC_URL:http://localhost:8082/}
+  llm:
+    # Qwen3 is a hybrid thinking model; /no_think keeps tool calling fast. Empty for hosted models.
+    system-prompt-suffix: ${LLM_SYSTEM_PROMPT_SUFFIX:/no_think}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

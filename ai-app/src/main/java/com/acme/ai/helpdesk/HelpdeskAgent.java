@@ -42,9 +42,10 @@ public class HelpdeskAgent {
 			- Always look up the employee before acting for them.
 			- When a device is broken, check its warranty and create a ticket for it.
 			- If an employee cannot work because their laptop is broken, offer a loaner laptop.
+			- If the user asks for a replacement and the device is out of warranty, use requestHardwarePurchase.
 			- Never claim that an action happened unless a tool result confirms it.
 			- If a tool result says an action was REJECTED, tell the user it was not performed.
-			Reply in at most 5 sentences and mention ticket numbers when you created tickets.
+			Reply in at most 5 sentences and mention ticket and purchase request numbers when you created them.
 			""";
 
 	private final ChatClient chatClient;
