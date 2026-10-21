@@ -34,18 +34,20 @@ On top sits `ChatClient`, a fluent API that pushes every request through an orde
 Almost every enterprise concern in this project is an advisor: memory, guardrails, retrieval, tool execution, metrics and model quirks. Feature code stays short because each concern sits in its own layer.
 
 ```mermaid
-flowchart LR
-    C["Controller<br/>prompt().call()"] --> M["Metrics<br/>HIGHEST · all demos"]
-    M --> G["Guardrails<br/>+100 … +130 · demo 2"]
-    G --> MEM["Chat memory<br/>+200 · demos 1, 2"]
-    MEM --> O["Output guard<br/>+250 · demo 2"]
-    O --> T["Tool calling<br/>+300 · demos 4, 7"]
-    T --> Q["Model quirks<br/>LOWEST − 100 · all demos"]
-    Q --> LLM[("ChatModel<br/>HTTP POST :1234/v1")]
-    LLM -. "tool_calls? execute, call again" .-> T
+flowchart TB
+  subgraph IN["request in · lower order runs first"]
+    direction LR
+    C["Controller"] --> M["Metrics<br/>HIGHEST"] --> G["Guardrails<br/>+100…+130"] --> MEM["Memory<br/>+200"]
+  end
+  subgraph DEEP["closer to the model"]
+    direction LR
+    O["Output guard<br/>+250"] --> T["Tool calling<br/>+300"] --> Q["Model quirks<br/>LOWEST−100"] --> LLM[("ChatModel<br/>:1234/v1")]
+    LLM -. "tool_calls: run tools,<br/>call again" .-> T
+  end
+  IN --> DEEP
 ```
 
-Advisors are ordered by `getOrder()`; lower runs first on the way in, and the response returns through them in reverse. Each demo adds only the advisors it needs; demo 3 adds `RetrievalAugmentationAdvisor` at order 0. The outermost and innermost advisors come from `AiClients.forFeature()`.
+Advisors are ordered by `getOrder()`; lower runs first on the way in, and the response returns through them in reverse. Metrics and model quirks wrap every demo and come from `AiClients.forFeature()`. The others are added per demo: guardrails and the output guard in demo 2, memory in demos 1 and 2, tool calling in demos 4 and 7, and `RetrievalAugmentationAdvisor` (order 0) in demo 3.
 
 ### Behind the scenes
 
@@ -119,14 +121,14 @@ An LLM follows instructions from anyone who can type into it, and its output is 
 - **Leakage.** System prompts often contain business rules you don't want published.
 
 ```mermaid
-flowchart LR
-    U([User message]) --> P["Mask PII<br/>[CARD] [EMAIL]"] --> I{"Injection<br/>check"}
-    I -- match --> X1["HTTP 400<br/>problem detail"]
-    I -- ok --> D{"Denylist<br/>SafeGuardAdvisor"}
-    D -- hit --> X2["canned refusal"]
-    D -- ok --> T{"Topic guard<br/>keywords, then LLM"}
-    T -- off-topic --> X3["polite refusal"]
-    T -- on-topic --> M["Chat memory<br/>masked text only"] --> L[("LLM")] --> O{"Output guard<br/>canary · copy · PII"} --> A([Answer])
+flowchart TB
+  U([User message]) --> P["Mask PII<br/>[CARD] [EMAIL]"] --> I{"Injection<br/>check"}
+  I -- match --> X1["HTTP 400<br/>problem detail"]
+  I -- ok --> D{"Denylist<br/>SafeGuardAdvisor"}
+  D -- hit --> X2["canned refusal"]
+  D -- ok --> T{"Topic guard<br/>keywords, then LLM"}
+  T -- off-topic --> X3["polite refusal"]
+  T -- on-topic --> M["Chat memory<br/>masked text only"] --> L[("LLM")] --> O{"Output guard<br/>canary · copy · PII"} --> A([Answer])
 ```
 
 Input guards run before the memory advisor, so a blocked or refused request leaves no trace in the model provider's logs or in the database. The output guard sits inside the memory advisor (+250 versus +200), so memory stores the filtered answer, not the raw one.
@@ -162,17 +164,16 @@ The model knows nothing about Acme's handbook, and fine-tuning is expensive and 
 Retrieval relies on **embeddings**. An embedding model maps a piece of text to a vector (here 768 numbers) so that texts with similar meaning land close together, measured by cosine similarity. "How fast must I report a lost laptop?" lands near the paragraph about lost devices even though they share few words. A vector database indexes these vectors for fast nearest-neighbour search.
 
 ```mermaid
-flowchart LR
-    subgraph Ingest["Ingest · startup or upload"]
-        F["Handbook file<br/>PDF · MD · DOCX"] --> TK["Tika reader<br/>extract text"] --> SP["Token splitter<br/>~180-token chunks"] --> TG["Tag + hash<br/>source · category · sha256"] --> EM["Embedding model<br/>768-dim vectors"]
-    end
-    EM -- "INSERT rows" --> PG[("pgvector<br/>vector_store · HNSW, cosine")]
-    subgraph Ask
-        Q["Question<br/>+ optional filter"] --> EQ["Embed question<br/>same model"] --> S["Similarity search<br/>top-k 4 · ≥ 0.55"]
-        S --> AU["Augment prompt<br/>[1] [2] + rules"] --> L["LLM<br/>answers with [n]"] --> AN["Answer + citations"]
-    end
-    S -- "query vector + filter" --> PG
-    PG -- "top-k chunks + scores" --> S
+flowchart TB
+  subgraph Ingest["Ingest · startup or upload"]
+    F["Handbook file<br/>PDF · MD · DOCX"] --> TK["Tika reader<br/>extract text"] --> SP["Token splitter<br/>~180-token chunks"] --> TG["Tag + hash<br/>source · category · sha256"] --> EM["Embedding model<br/>768-dim vectors"]
+  end
+  subgraph Ask
+    Q["Question<br/>+ optional filter"] --> EQ["Embed question<br/>same model"] --> S["Similarity search<br/>top-k 4 · ≥ 0.55"] --> AU["Augment prompt<br/>[1] [2] + rules"] --> L["LLM<br/>answers with [n]"] --> AN["Answer + citations"]
+  end
+  EM -- "INSERT rows" --> PG[("pgvector<br/>vector_store · HNSW, cosine")]
+  S -- "query vector + filter" --> PG
+  PG -- "top-k chunks + scores" --> S
 ```
 
 Both paths must use the same embedding model; otherwise the question's vector and the stored vectors live in different spaces. Before ingesting, a file's sha256 is compared with the `kb_document` registry: an unchanged file is skipped, and a changed file has its old chunks deleted first.
@@ -214,25 +215,26 @@ With **tool calling** (also called function calling), you send the model a list 
 An **agent** is this loop running freely: the model decides which tools to use and in what order. The more side effects the tools have, the more you need controls: least-privilege tools, an audit log, and human approval for actions you can't undo.
 
 ```mermaid
+%%{init: {"sequence": {"actorMargin": 16, "width": 110, "messageFontSize": 13, "noteFontSize": 12}}}%%
 sequenceDiagram
-    participant UI as Browser
-    participant A as HelpdeskAgent
-    participant G as ToolCallingAdvisor + approval gate
-    participant L as LLM
-    participant H as Approver
-    UI->>A: "reset password for asmith"
-    A->>G: prompt + tool schemas
-    G->>L: chat request
-    L-->>G: tool_call resetPassword(asmith)
-    G-->>A: ApprovalRequiredException
-    Note over A: parks prompt + tool call under an id
-    A-->>UI: 202 + approvalId
-    H->>A: approve
-    Note over A: runs resetPassword, writes the audit log
-    A->>G: history + tool result
-    G->>L: chat request
-    L-->>A: final answer
-    A-->>UI: 200 + reply + tool trace
+  participant UI as Browser
+  participant A as Agent
+  participant G as Tool loop + gate
+  participant L as LLM
+  participant H as Approver
+  UI->>A: reset password
+  A->>G: prompt + tools
+  G->>L: chat request
+  L-->>G: tool_call resetPassword
+  G-->>A: ApprovalRequired
+  Note over A: parks the call
+  A-->>UI: 202 + approvalId
+  H->>A: approve
+  Note over A: runs the tool, audits
+  A->>G: tool result
+  G->>L: chat request
+  L-->>A: final answer
+  A-->>UI: 200 + reply
 ```
 
 The pause is an exception that carries the whole conversation. Nothing changes in the database until the human decides, and the approved call is executed by the application, not re-requested from the model.
@@ -344,11 +346,11 @@ Back-office automation needs typed data that a system can act on, not prose. The
 Even a perfect schema can say "`total` is a number" but not "total = subtotal + tax", so **validation** stays in your code. Clean documents flow straight through, and exceptions go to a person.
 
 ```mermaid
-flowchart LR
-    R["Java record<br/>Invoice.class"] --> S["JSON schema<br/>BeanOutputConverter"] --> RF["response_format<br/>json_schema"] --> D["LM Studio<br/>grammar-constrained"] --> J["Jackson<br/>JSON → record"] --> V{"Bean Validation<br/>@TotalsMatch"}
-    V -- valid --> OK(["straight through"])
-    V -- "violations · ask again (max 2 retries)" --> RF
-    V -- "same violations twice" --> NR(["needsReview → human queue"])
+flowchart TB
+  R["Java record<br/>Invoice.class"] --> S["JSON schema<br/>BeanOutputConverter"] --> RF["response_format<br/>json_schema"] --> D["LM Studio<br/>grammar-constrained decoding"] --> J["Jackson<br/>JSON → record"] --> V{"Bean Validation<br/>@TotalsMatch"}
+  V -- valid --> OK(["straight through"])
+  V -- "violations: ask again<br/>(max 2 retries)" --> RF
+  V -- "same violations twice" --> NR(["needsReview →<br/>human queue"])
 ```
 
 Shape is guaranteed by the decoder; meaning is checked in Java. When a retry returns exactly the same violations, the model has re-read the document and confirmed its values, so the document itself is wrong and it goes to a person.
@@ -387,19 +389,13 @@ Shape is guaranteed by the decoder; meaning is checked in Java. When a retry ret
 - Messages are **JSON-RPC 2.0**, carried over **stdio** (a local subprocess) or **Streamable HTTP** (one endpoint; the client POSTs JSON-RPC and the server answers with JSON or an event stream).
 
 ```mermaid
-flowchart LR
-    subgraph App["ai-app :8080 · MCP client"]
-        MC["McpSyncClient<br/>lazy initialize"] -- "tool list" --> CB["SyncMcpToolCallbackProvider<br/>MCP tools → ToolCallbacks"] -- callbacks --> TL["ChatClient tool loop<br/>same loop as demo 4"]
-    end
-    TL -- "tool schemas" --> L[("LLM")]
-    L -. "tool_calls" .-> TL
-    MC == "JSON-RPC 2.0 over HTTP POST /mcp<br/>initialize · tools/list · tools/call · prompts/get · resources/read" ==> EP
-    subgraph Server["mcp-server :8081 · Travel Desk"]
-        EP["/mcp endpoint<br/>Streamable HTTP"] --> T1["@McpTool ×3<br/>convert_currency · world_time · public_holidays"]
-        EP --> R1["@McpResource<br/>travel://fx-rates"]
-        EP --> P1["@McpPrompt<br/>trip-briefing"]
-    end
-    CD["Claude Desktop / Claude Code"] -- "same protocol" --> EP
+flowchart TB
+  L[("LLM")] -- "tool_calls" --> TL["ChatClient tool loop<br/>ai-app :8080, same loop as demo 4"]
+  TL -. "tool schemas" .-> L
+  TL -- "calls the tool via" --> CB["SyncMcpToolCallbackProvider<br/>MCP tools as ToolCallbacks"]
+  CB -- "forwards to" --> MC["McpSyncClient<br/>lazy initialize"]
+  MC == "JSON-RPC over HTTP POST /mcp<br/>initialize · tools/list · tools/call<br/>prompts/get · resources/read" ==> S["mcp-server :8081 · Travel Desk<br/>@McpTool: convert_currency · world_time · public_holidays<br/>@McpResource: travel://fx-rates<br/>@McpPrompt: trip-briefing"]
+  CD["Claude Desktop<br/>Claude Code"] -- "same protocol" --> S
 ```
 
 The model never talks to the MCP server directly. It sees MCP tools as ordinary tool schemas, and when it calls one, the app's callback forwards the call as `tools/call` to the server process.
@@ -436,21 +432,21 @@ The model never talks to the MCP server directly. It sees MCP tools as ordinary 
 LLM features fail differently from normal code: calls take seconds, every request costs tokens, the same input can produce different output, and one user request can fan out into many model, tool and database calls. You need cost and latency per feature, block and error rates, and **traces** that show each step of a single request. OpenTelemetry is the vendor-neutral standard for this, and its GenAI semantic conventions define the `gen_ai.*` attributes: model, operation, input and output tokens. Prompts and completions contain personal data, so recording them stays off unless you need to debug.
 
 ```mermaid
-flowchart LR
-    subgraph App["ai-app"]
-        O["Micrometer observations<br/>Spring AI + FeatureMetricsAdvisor"] --> MT["Meters<br/>timers · counters"]
-        O --> SP["Spans<br/>OTel bridge"]
-    end
-    MT -- "OTLP/HTTP push" --> C
-    SP -- "OTLP/HTTP push" --> C
-    subgraph LGTM["grafana/otel-lgtm"]
-        C["OTel Collector"] --> P[("Prometheus · metrics")]
-        C --> T[("Tempo · traces")]
-        C --> L[("Loki · logs")]
-    end
-    P --> GR["Grafana :3000<br/>Acme AI Overview · trace explorer"]
-    T --> GR
-    L --> GR
+flowchart TB
+  subgraph App["ai-app"]
+    O["Micrometer observations<br/>Spring AI + FeatureMetricsAdvisor"] --> MT["Meters<br/>timers · counters"]
+    O --> SP["Spans<br/>OTel bridge"]
+  end
+  MT -- "OTLP/HTTP push" --> C
+  SP -- "OTLP/HTTP push" --> C
+  subgraph LGTM["grafana/otel-lgtm"]
+    C["OTel Collector"] --> P[("Prometheus<br/>metrics")]
+    C --> T[("Tempo<br/>traces")]
+    C --> L[("Loki<br/>logs")]
+  end
+  P --> GR["Grafana :3000<br/>Acme AI Overview · trace explorer"]
+  T --> GR
+  L --> GR
 ```
 
 Spring Boot's Docker Compose support sees the `grafana/otel-lgtm` image in `compose.yaml` and fills in the OTLP endpoints itself, so no telemetry URL appears in the configuration.

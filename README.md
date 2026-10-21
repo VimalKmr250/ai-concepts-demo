@@ -25,23 +25,14 @@ A runnable sample of the AI patterns enterprises are adopting now. It's built on
 ## Architecture
 
 ```mermaid
-flowchart LR
-  UI["Browser UI<br/>(static, no build)"] -->|REST / SSE| APP
-  subgraph APP["ai-app :8080 (Spring Boot 4, Spring AI 2)"]
-    CC["ChatClient per feature<br/>+ advisors"]
-    G["Guardrail advisors"]
-    R["RAG: Tika ETL + RetrievalAugmentationAdvisor"]
-    T["@Tool + approval gate"]
-    W["Agent workflows"]
-    X["Extraction + Bean Validation"]
-    MC["MCP client"]
-    E["Evaluators"]
-  end
-  APP -->|OpenAI-compatible API| LLM["LM Studio :1234<br/>qwen3-4b + nomic-embed<br/>(or hosted provider)"]
-  APP -->|JDBC| PG[("Postgres + pgvector<br/>vectors · chat memory · helpdesk data")]
-  MC -->|MCP Streamable HTTP| MCPS["mcp-server :8081<br/>Acme Travel Desk"]
-  CLAUDE["Claude Desktop / Claude Code"] -->|MCP| MCPS
-  APP -->|OTLP| LGTM["grafana/otel-lgtm :3000<br/>Tempo · Prometheus · Grafana"]
+flowchart TB
+  UI["Browser UI<br/>static HTML, no build"] -->|REST / SSE| APP
+  APP["ai-app :8080 · Spring Boot 4 + Spring AI 2<br/>ChatClient + advisors · guardrails · RAG · tools<br/>agents · extraction · MCP client · evals"]
+  APP -->|chat + embeddings| LLM["LM Studio :1234<br/>or hosted LLM"]
+  APP -->|JDBC| PG[("Postgres<br/>+ pgvector")]
+  APP -->|MCP| MCPS["mcp-server :8081<br/>Travel Desk"]
+  APP -->|OTLP| LGTM["otel-lgtm :3000<br/>Grafana"]
+  CLAUDE["Claude Desktop<br/>Claude Code"] -->|MCP| MCPS
 ```
 
 Postgres and Grafana LGTM are started automatically by Spring Boot's Docker Compose support ([ai-app/compose.yaml](ai-app/compose.yaml)) when ai-app starts.
