@@ -1,0 +1,13 @@
+[
+  { "question": "How many unused leave days can I carry over into next year?", "mustContain": [["5", "five"]] },
+  { "question": "By which date must carried-over leave days be taken?", "mustContain": [["31 March", "March 31"]] },
+  { "question": "How many weeks of fully paid parental leave does the primary caregiver get?", "mustContain": [["20"]] },
+  { "question": "What is the hotel cap per night in London?", "mustContain": [["250"]] },
+  { "question": "Within how many days must expense claims be submitted?", "mustContain": [["30"]] },
+  { "question": "How many days per week can I work remotely?", "mustContain": [["3", "three"]] },
+  { "question": "What is the minimum password length?", "mustContain": [["14"]] },
+  { "question": "How quickly must a lost laptop be reported?", "mustContain": [["1 hour", "one hour"]] },
+  { "question": "How large is the yearly learning budget?", "mustContain": [["1,500", "1500", "1.500"]] },
+  { "question": "Up to what value may I accept a gift from a business partner?", "mustContain": [["50"]] },
+  { "question": "What is the CEO's annual salary?", "expectNotFound": true }
+]

@@ -1,0 +1,123 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: acme-ai-showcase
+  threads:
+    virtual:
+      enabled: true
+  docker:
+    compose:
+      # keep Postgres/Grafana running between app restarts (memory demo restarts the app)
+      lifecycle-management: start-only
+  flyway:
+    locations: classpath:db/migration
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 20MB
+
+  ai:
+    # ---------------------------------------------------------------------------------
+    # Model provider. Defaults target LM Studio's OpenAI-compatible server.
+    # To use hosted OpenAI: --spring.profiles.active=openai (see application-openai.yml)
+    # or override LLM_BASE_URL / LLM_API_KEY / CHAT_MODEL / EMBEDDING_MODEL.
+    # ---------------------------------------------------------------------------------
+    openai:
+      base-url: ${LLM_BASE_URL:http://localhost:1234/v1}
+      api-key: ${LLM_API_KEY:lm-studio}
+      timeout: 180s
+      max-retries: 1
+      chat:
+        model: ${CHAT_MODEL:qwen3-4b}
+        temperature: 0.2
+      embedding:
+        model: ${EMBEDDING_MODEL:text-embedding-nomic-embed-text-v1.5}
+
+    vectorstore:
+      pgvector:
+        initialize-schema: true
+        # must match the embedding model (nomic-embed-text = 768, text-embedding-3-small = 1536)
+        dimensions: ${EMBEDDING_DIMENSIONS:768}
+        index-type: hnsw
+        distance-type: cosine_distance
+
+    chat:
+      memory:
+        repository:
+          jdbc:
+            initialize-schema: never   # table is created by Flyway (V1__schema.sql)
+      client:
+        observations:
+          log-prompt: false            # prompts may contain PII; keep out of traces by default
+          log-completion: false
+
+    tools:
+      observations:
+        include-content: false
+
+    mcp:
+      client:
+        name: acme-ai-showcase
+        type: SYNC
+        initialized: false             # connect lazily so the app starts even if mcp-server is down
+        request-timeout: 30s
+        streamable-http:
+          connections:
+            travel-desk:
+              url: ${MCP_TRAVEL_DESK_URL:http://localhost:8081}
+              endpoint: /mcp
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  tracing:
+    sampling:
+      probability: 1.0
+  otlp:
+    metrics:
+      export:
+        step: 10s
+  metrics:
+    distribution:
+      # publish histogram buckets so Grafana can compute p95 latencies
+      percentiles-histogram:
+        acme.ai.feature: true
+        gen_ai.client.operation: true
+        db.vector.client.operation: true
+        http.server.requests: true
+  observations:
+    key-values:
+      application: acme-ai-showcase
+
+# ---------------------------------------------------------------------------------
+# Demo settings (bound to com.acme.ai.config.AcmeProperties)
+# ---------------------------------------------------------------------------------
+acme:
+  llm:
+    # Qwen3 hybrid models think out loud by default; "/no_think" switches that off.
+    # Reset both for models that don't need it (the openai profile does).
+    system-prompt-suffix: ${LLM_SYSTEM_PROMPT_SUFFIX:/no_think}
+    strip-thinking: true
+  rag:
+    top-k: 4
+    similarity-threshold: 0.55
+    rewrite-query: false               # extra LLM call; enable for chatty/ambiguous questions
+    ingest-on-startup: true
+  guardrails:
+    llm-injection-classifier: false    # heuristic check always runs; LLM classifier is optional
+    allowed-topics: banking, accounts, cards, payments, loans, transfers, fees, fraud, branches, mortgages, savings
+    denylist: internal use only, confidential pricing, system prompt
+  extraction:
+    max-retries: 2
+  agents:
+    evaluator-max-rounds: 3
+  evaluation:
+    min-pass-rate: 0.8                 # RAG quality gate threshold (demo 9)
+
+logging:
+  level:
+    com.acme.ai: INFO

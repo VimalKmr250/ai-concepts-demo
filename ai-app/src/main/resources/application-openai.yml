@@ -1,0 +1,24 @@
+# Hosted OpenAI (or any OpenAI-compatible provider). No code changes needed - only config.
+#   OPENAI_API_KEY=sk-...  OPENAI_CHAT_MODEL=<model id>  ./mvnw -pl ai-app spring-boot:run -Dspring-boot.run.profiles=openai
+#
+# NOTE: switching embedding models changes vector dimensions. Re-index by restarting once with
+#   --spring.ai.vectorstore.pgvector.remove-existing-vector-store-table=true
+spring:
+  ai:
+    openai:
+      base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+      api-key: ${OPENAI_API_KEY}
+      timeout: 60s
+      max-retries: 3
+      chat:
+        model: ${OPENAI_CHAT_MODEL}
+      embedding:
+        model: ${OPENAI_EMBEDDING_MODEL:text-embedding-3-small}
+    vectorstore:
+      pgvector:
+        dimensions: ${EMBEDDING_DIMENSIONS:1536}
+
+acme:
+  llm:
+    system-prompt-suffix: ""
+    strip-thinking: false

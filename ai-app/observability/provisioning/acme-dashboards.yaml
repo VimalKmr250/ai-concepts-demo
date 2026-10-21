@@ -1,0 +1,10 @@
+apiVersion: 1
+
+providers:
+  - name: "Acme AI"
+    folder: "Acme AI Showcase"
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    options:
+      path: /otel-lgtm/acme-dashboards

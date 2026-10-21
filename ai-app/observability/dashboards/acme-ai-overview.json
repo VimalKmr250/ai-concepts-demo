@@ -1,0 +1,112 @@
+{
+  "uid": "acme-ai-overview",
+  "title": "Acme AI Overview",
+  "description": "LLM usage, latency, tools, guardrails and traces for the Acme AI Showcase",
+  "tags": ["acme", "ai", "spring-ai"],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "10s",
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "LLM tokens (range)",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 } },
+      "targets": [ { "refId": "A", "expr": "sum(increase(acme_ai_tokens_total[$__range]))" } ]
+    },
+    {
+      "id": 2, "type": "stat", "title": "AI requests (range)",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 } },
+      "targets": [ { "refId": "A", "expr": "sum(increase(acme_ai_feature_milliseconds_count[$__range]))" } ]
+    },
+    {
+      "id": 3, "type": "stat", "title": "Guardrail interventions (range)",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0, "color": { "mode": "fixed", "fixedColor": "orange" } } },
+      "targets": [ { "refId": "A", "expr": "sum(increase(acme_guardrails_events_total[$__range]))" } ]
+    },
+    {
+      "id": 4, "type": "stat", "title": "Human approvals requested (range)",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0, "color": { "mode": "fixed", "fixedColor": "purple" } } },
+      "targets": [ { "refId": "A", "expr": "sum(increase(acme_approvals_total{decision=\"requested\"}[$__range]))" } ]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Tokens per minute by feature",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "fillOpacity": 60, "stacking": { "mode": "normal" } } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum"] } },
+      "targets": [ { "refId": "A", "expr": "sum by (feature) (increase(acme_ai_tokens_total[1m]))", "legendFormat": "{{feature}}" } ]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "p95 latency by feature (whole request incl. tool loops)",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ms" } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"] } },
+      "targets": [ { "refId": "A", "expr": "histogram_quantile(0.95, sum by (le, feature) (rate(acme_ai_feature_milliseconds_bucket[5m])))", "legendFormat": "{{feature}}" } ]
+    },
+    {
+      "id": 7, "type": "barchart", "title": "Tool calls by tool (current app run)",
+      "gridPos": { "x": 0, "y": 12, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "options": { "orientation": "horizontal", "xField": "spring_ai_tool_definition_name", "showValue": "always", "legend": { "showLegend": false } },
+      "fieldConfig": { "defaults": { "decimals": 0 } },
+      "transformations": [ { "id": "reduce", "options": { "reducers": ["lastNotNull"] } } ],
+      "targets": [ { "refId": "A", "expr": "sum by (spring_ai_tool_definition_name) (max_over_time(spring_ai_tool_milliseconds_count[$__range]))", "legendFormat": "{{spring_ai_tool_definition_name}}", "instant": true } ]
+    },
+    {
+      "id": 8, "type": "barchart", "title": "Guardrail events by guard / action (range)",
+      "gridPos": { "x": 8, "y": 12, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "options": { "orientation": "horizontal", "showValue": "always", "legend": { "showLegend": false } },
+      "fieldConfig": { "defaults": { "decimals": 0, "color": { "mode": "fixed", "fixedColor": "orange" } } },
+      "transformations": [ { "id": "reduce", "options": { "reducers": ["lastNotNull"] } } ],
+      "targets": [ { "refId": "A", "expr": "sum by (guard, action) (increase(acme_guardrails_events_total[$__range]))", "legendFormat": "{{guard}} · {{action}}", "instant": true } ]
+    },
+    {
+      "id": 9, "type": "barchart", "title": "Model tokens by model and type (range)",
+      "gridPos": { "x": 16, "y": 12, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "options": { "orientation": "horizontal", "showValue": "always", "legend": { "showLegend": false } },
+      "fieldConfig": { "defaults": { "decimals": 0 } },
+      "transformations": [ { "id": "reduce", "options": { "reducers": ["lastNotNull"] } } ],
+      "targets": [ { "refId": "A", "expr": "sum by (gen_ai_request_model, gen_ai_token_type) (increase(gen_ai_client_token_usage_total{gen_ai_token_type!=\"total\"}[$__range]))", "legendFormat": "{{gen_ai_request_model}} · {{gen_ai_token_type}}", "instant": true } ]
+    },
+    {
+      "id": 10, "type": "timeseries", "title": "Model call p95 latency vs. vector search p95",
+      "gridPos": { "x": 0, "y": 20, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ms" } },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.95, sum by (le, gen_ai_operation_name) (rate(gen_ai_client_operation_milliseconds_bucket[5m])))", "legendFormat": "model {{gen_ai_operation_name}}" },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum by (le) (rate(db_vector_client_operation_milliseconds_bucket[5m])))", "legendFormat": "vector store" }
+      ]
+    },
+    {
+      "id": 11, "type": "timeseries", "title": "Request outcomes by feature (success · blocked · approval_pending · error)",
+      "gridPos": { "x": 12, "y": 20, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "fillOpacity": 60 } } },
+      "targets": [ { "refId": "A", "expr": "sum by (feature, outcome) (increase(acme_ai_feature_milliseconds_count[1m]))", "legendFormat": "{{feature}} · {{outcome}}" } ]
+    },
+    {
+      "id": 12, "type": "table", "title": "Recent traces (click a trace ID to open the span tree)",
+      "gridPos": { "x": 0, "y": 28, "w": 24, "h": 10 },
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "targets": [ { "refId": "A", "queryType": "traceql", "query": "{ resource.service.name = \"acme-ai-showcase\" && name =~ \"http post /api/.*\" }", "limit": 20, "tableType": "traces" } ]
+    }
+  ]
+}

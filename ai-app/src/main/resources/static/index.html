@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Acme AI Showcase</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%234f46e5'/><text x='16' y='22' font-size='16' text-anchor='middle' fill='white' font-family='sans-serif' font-weight='700'>AI</text></svg>">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="#home"><span class="logo">AI</span> Acme AI Showcase</a>
+  <div class="status" id="status">connecting…</div>
+  <a class="toplink" id="grafanaLink" href="http://localhost:3000/d/acme-ai-overview" target="_blank" rel="noopener">Grafana ↗</a>
+</header>
+
+<div class="layout">
+  <nav class="sidebar" id="nav">
+    <a href="#home" data-nav="home">Overview</a>
+    <div class="navgroup">Demos</div>
+    <a href="#chat" data-nav="chat"><b>1</b> Chat &amp; memory</a>
+    <a href="#guardrails" data-nav="guardrails"><b>2</b> Guardrails</a>
+    <a href="#rag" data-nav="rag"><b>3</b> RAG with citations</a>
+    <a href="#helpdesk" data-nav="helpdesk"><b>4</b> Tools + approvals <span class="badge" id="approvalBadge" hidden>0</span></a>
+    <a href="#agents" data-nav="agents"><b>5</b> Agent patterns</a>
+    <a href="#extraction" data-nav="extraction"><b>6</b> Structured extraction</a>
+    <a href="#mcp" data-nav="mcp"><b>7</b> MCP</a>
+    <a href="#observability" data-nav="observability"><b>8</b> Observability</a>
+    <a href="#evaluation" data-nav="evaluation"><b>9</b> LLM evaluation</a>
+  </nav>
+
+  <main id="main">
+
+    <!-- ================================================================ HOME -->
+    <section id="home" class="page">
+      <h1>Enterprise AI patterns, one demo each</h1>
+      <p class="lead">A Spring Boot 4 + Spring AI 2 sample for the fictional <b>Acme Corp</b>. Every feature has its own
+        use case, seed data and ready-made examples. It runs on a local LLM (LM Studio) and switches to a hosted
+        OpenAI-compatible provider with configuration only.</p>
+      <div class="grid" id="featureGrid"></div>
+    </section>
+
+    <!-- ================================================================ 1 CHAT -->
+    <section id="chat" class="page" hidden>
+      <div class="pagehead">
+        <h1><span class="num">1</span> Chat with persistent memory &amp; streaming</h1>
+        <p class="usecase">Use case: <b>Acme Connect customer support assistant</b> that remembers the customer — even after the app restarts.</p>
+      </div>
+      <details class="how"><summary>How it works</summary>
+        <ul>
+          <li><code>MessageChatMemoryAdvisor</code> loads the last 20 messages of the conversation and stores each new turn.</li>
+          <li><code>JdbcChatMemoryRepository</code> persists them in Postgres (<code>spring_ai_chat_memory</code>), keyed by conversation id.</li>
+          <li><code>ChatClient.stream()</code> returns a <code>Flux&lt;String&gt;</code>, sent to the browser as Server-Sent Events.</li>
+          <li>Demo: send messages 1–2, restart ai-app, then ask message 2 again with the same conversation id.</li>
+        </ul>
+      </details>
+      <div class="row">
+        <label>Conversation id <input id="chatConv" value="priya-demo" maxlength="36"></label>
+        <button class="ghost" id="chatNew">New conversation</button>
+        <button class="ghost" id="chatMemory">View stored memory</button>
+        <button class="ghost danger" id="chatForget">Forget</button>
+      </div>
+      <div class="examples" id="chatExamples"></div>
+      <div class="chatlog" id="chatLog"></div>
+      <form class="composer" id="chatForm">
+        <input id="chatInput" placeholder="Type a message…" autocomplete="off">
+        <button type="submit">Send</button>
+      </form>
+      <div id="chatMemoryOut"></div>
+    </section>
+
+    <!-- ================================================================ 2 GUARDRAILS -->
+    <section id="guardrails" class="page" hidden>
+      <div class="pagehead">
+        <h1><span class="num">2</span> Guardrails</h1>
+        <p class="usecase">Use case: <b>Acme Bank public chat</b> — protect customers' data and keep the assistant on its job.</p>
+      </div>
+      <details class="how"><summary>How it works</summary>
+        <ul>
+          <li>Guardrails are ChatClient <b>advisors</b> that run before the memory advisor, so nothing unsafe is sent to the model or stored.</li>
+          <li><code>PiiRedactionAdvisor</code> masks emails, card numbers (Luhn-checked), IBANs, phone and SSN-style numbers.</li>
+          <li><code>PromptInjectionAdvisor</code> blocks jailbreak patterns (HTTP 400, RFC 9457 problem detail); optional LLM classifier.</li>
+          <li>Spring AI's <code>SafeGuardAdvisor</code> enforces a denylist; <code>TopicGuardAdvisor</code> refuses off-topic requests without calling the model.</li>
+          <li><code>OutputGuardAdvisor</code> withholds answers that leak the system prompt and masks PII in the answer.</li>
+        </ul>
+      </details>
+      <div class="examples" id="guardExamples"></div>
+      <form class="composer" id="guardForm">
+        <input id="guardInput" placeholder="Message to Acme Bank's assistant…" autocomplete="off">
+        <button type="submit">Send</button>
+      </form>
+      <div id="guardOut"></div>
+    </section>
+
+    <!-- ================================================================ 3 RAG -->
+    <section id="rag" class="page" hidden>
+      <div class="pagehead">
+        <h1><span class="num">3</span> RAG with citations</h1>
+        <p class="usecase">Use case: <b>HR &amp; IT policy Q&amp;A</b> for Acme employees, answered only from the handbook — with sources.</p>
+      </div>
+      <details class="how"><summary>How it works</summary>
+        <ul>
+          <li>Ingestion (ETL): <code>TikaDocumentReader</code> (PDF, DOCX, MD…) → <code>TokenTextSplitter</code> → metadata (source, category, sha256) → <code>PgVectorStore</code>.</li>
+          <li>Answering: <code>RetrievalAugmentationAdvisor</code> with <code>VectorStoreDocumentRetriever</code> (top-k, similarity threshold, metadata filter).</li>
+          <li><code>ContextualQueryAugmenter</code> numbers the sources for citations and answers "not found" when nothing relevant is retrieved.</li>
+        </ul>
+      </details>
+      <div class="examples" id="ragExamples"></div>
+      <form class="composer" id="ragForm">
+        <input id="ragInput" placeholder="Ask about leave, travel, remote work, IT security, benefits…" autocomplete="off">
+        <select id="ragCategory"><option value="">All categories</option><option>HR</option><option>IT</option><option>FINANCE</option></select>
+        <button type="submit">Ask</button>
+      </form>
+      <div id="ragOut"></div>
+      <h2>Knowledge base</h2>
+      <form class="row" id="uploadForm">
+        <input type="file" id="uploadFile" accept=".pdf,.md,.txt,.docx,.html">
+        <select id="uploadCategory"><option>HR</option><option>IT</option><option>FINANCE</option></select>
+        <button type="submit">Upload &amp; ingest</button>
+        <button type="button" class="ghost" id="reloadSamples">Reload sample handbook</button>
+      </form>
+      <div id="docsOut"></div>
+    </section>
+
+    <!-- ================================================================ 4 HELPDESK -->
+    <section id="helpdesk" class="page" hidden>
+      <div class="pagehead">
+        <h1><span class="num">4</span> Tool calling with human-in-the-loop</h1>
+        <p class="usecase">Use case: <b>IT helpdesk agent</b> that looks up employees and laptops, opens tickets — and asks a human before risky actions.</p>
+      </div>
+      <details class="how"><summary>How it works</summary>
+        <ul>
+          <li>Business methods are exposed with <code>@Tool</code>; the model decides which to call and with which arguments.</li>
+          <li>Spring AI 2 runs the tool loop in <code>ToolCallingAdvisor</code>. A custom <code>ToolCallingManager</code> lets safe tools run and pauses on methods marked <code>@RequiresApproval</code>.</li>
+          <li>The paused conversation is parked; Approve executes the call and resumes the agent, Reject tells the agent it was not done.</li>
+          <li>Seed data (Flyway): 8 employees, 10 assets, 6 tickets. Every action is written to an audit log.</li>
+        </ul>
+      </details>
+      <div class="examples" id="helpExamples"></div>
+      <form class="composer" id="helpForm">
+        <input id="helpInput" placeholder="Message to the IT helpdesk…" autocomplete="off">
+        <button type="submit">Send</button>
+      </form>
+      <div id="helpOut"></div>
+      <div class="cols">
+        <div><h2>Pending approvals</h2><div id="approvalsOut"></div></div>
+        <div><h2>Audit log</h2><div id="auditOut"></div></div>
+      </div>
+      <h2>Tickets</h2>
+      <div id="ticketsOut"></div>
+    </section>
+
+    <!-- ================================================================ 5 AGENTS -->
+    <section id="agents" class="page" hidden>
+      <div class="pagehead">
+        <h1><span class="num">5</span> Agentic workflow patterns</h1>
+        <p class="usecase">The five patterns from <i>Building effective agents</i>, each on an Acme use case, built with plain <code>ChatClient</code> calls.</p>
+      </div>
+      <div class="tabs" id="agentTabs">
+        <button data-pattern="chain" class="active">Chain</button>
+        <button data-pattern="routing">Routing</button>
+        <button data-pattern="parallel">Parallelization</button>
+        <button data-pattern="orchestrator">Orchestrator-workers</button>
+        <button data-pattern="evaluator">Evaluator-optimizer</button>
+      </div>
+      <p class="patterndesc" id="agentDesc"></p>
+      <div class="examples" id="agentExamples"></div>
+      <textarea id="agentInput" rows="5"></textarea>
+      <div class="row"><button id="agentRun">Run workflow</button><span class="hint" id="agentHint"></span></div>
+      <div id="agentOut"></div>
+    </section>
+
+    <!-- ================================================================ 6 EXTRACTION -->
+    <section id="extraction" class="page" hidden>
+      <div class="pagehead">
+        <h1><span class="num">6</span> Structured extraction</h1>
+        <p class="usecase">Use cases: <b>accounts-payable invoice processing</b> and <b>meeting notes → action items</b>.</p>
+      </div>
+      <details class="how"><summary>How it works</summary>
+        <ul>
+          <li><code>ChatClient…entity(Invoice.class)</code> with <code>useProviderStructuredOutput()</code>: the JSON schema of the Java record is sent as <code>response_format</code> — the model can only produce matching JSON.</li>
+          <li>Jakarta Bean Validation enforces business rules the schema can't express (custom <code>@TotalsMatch</code>: line items = subtotal, subtotal + tax = total).</li>
+          <li>Violations are fed back for another attempt; if the document itself is wrong, the result is flagged <b>needsReview</b> for a human.</li>
+        </ul>
+      </details>
+      <div class="row">
+        <label>Document type <select id="extractType"><option value="invoice">Invoice</option><option value="meeting-notes">Meeting notes</option></select></label>
+      </div>
+      <div class="examples" id="extractExamples"></div>
+      <textarea id="extractInput" rows="12" placeholder="Paste an invoice email or a meeting transcript…"></textarea>
+      <div class="row"><button id="extractRun">Extract</button></div>
+      <div id="extractOut"></div>
+    </section>
+
+    <!-- ================================================================ 7 MCP -->
+    <section id="mcp" class="page" hidden>
+      <div class="pagehead">
+        <h1><span class="num">7</span> Model Context Protocol</h1>
+        <p class="usecase">Use case: <b>Acme Travel Desk</b> — an internal MCP server (separate process) whose tools any AI client can use.</p>
+      </div>
+      <details class="how"><summary>How it works</summary>
+        <ul>
+          <li><b>Server</b> (<code>mcp-server</code>, port 8081): <code>@McpTool</code>, <code>@McpResource</code>, <code>@McpPrompt</code> beans, Streamable HTTP transport at <code>/mcp</code>.</li>
+          <li><b>Client</b> (this app): <code>spring-ai-starter-mcp-client</code> discovers the tools at runtime; <code>SyncMcpToolCallbackProvider</code> hands them to <code>ChatClient</code> like local tools.</li>
+          <li>The same server works from Claude Desktop / Claude Code — see the snippet below.</li>
+        </ul>
+      </details>
+      <div class="cols">
+        <div>
+          <h2>Ask the travel assistant</h2>
+          <div class="examples" id="mcpExamples"></div>
+          <form class="composer" id="mcpForm">
+            <input id="mcpInput" placeholder="Ask about exchange rates, local time, public holidays…" autocomplete="off">
+            <button type="submit">Ask</button>
+          </form>
+          <h2>Use the server's prompt template</h2>
+          <form class="row" id="tripForm">
+            <input id="tripCity" placeholder="City" size="10">
+            <input id="tripDate" placeholder="yyyy-MM-dd" size="10">
+            <input id="tripBudget" placeholder="Daily budget" size="10">
+            <button type="submit">Trip briefing</button>
+          </form>
+        </div>
+        <div>
+          <h2>Discovered from the server</h2>
+          <div id="mcpCatalog"><button class="ghost" id="mcpLoadCatalog">Load catalog</button></div>
+        </div>
+      </div>
+      <div id="mcpOut"></div>
+      <details class="how"><summary>Connect Claude Desktop / Claude Code to the same server</summary>
+        <pre class="code">claude mcp add --transport http acme-travel-desk http://localhost:8081/mcp</pre>
+        <pre class="code">// claude_desktop_config.json
+{
+  "mcpServers": {
+    "acme-travel-desk": { "command": "npx", "args": ["mcp-remote", "http://localhost:8081/mcp"] }
+  }
+}</pre>
+      </details>
+    </section>
+
+    <!-- ================================================================ 8 OBSERVABILITY -->
+    <section id="observability" class="page" hidden>
+      <div class="pagehead">
+        <h1><span class="num">8</span> Observability</h1>
+        <p class="usecase">Use case: <b>AI operations</b> — what does each feature cost in tokens, how slow is it, which tools run, what do guardrails block?</p>
+      </div>
+      <details class="how" open><summary>How it works</summary>
+        <ul>
+          <li>Spring AI emits Micrometer observations for every ChatClient call, advisor, model call (<code>gen_ai.*</code>), tool call and vector search.</li>
+          <li>Spring Boot 4's OpenTelemetry starter exports traces and metrics via OTLP to the <code>grafana/otel-lgtm</code> container (Tempo + Prometheus + Grafana).</li>
+          <li><code>FeatureMetricsAdvisor</code> adds the business dimension: tokens and latency per showcase feature.</li>
+          <li>Prompt/completion content is <b>not</b> recorded by default (PII); enable via <code>spring.ai.chat.client.observations.log-prompt</code>.</li>
+        </ul>
+      </details>
+      <div class="row">
+        <a class="button" href="http://localhost:3000/d/acme-ai-overview" target="_blank" rel="noopener">Open "Acme AI Overview" dashboard ↗</a>
+        <a class="button ghost" href="http://localhost:3000/explore" target="_blank" rel="noopener">Explore traces (Tempo) ↗</a>
+        <button class="ghost" id="obsRefresh">Refresh live counters</button>
+      </div>
+      <div id="obsOut"></div>
+    </section>
+
+    <!-- ================================================================ 9 EVALUATION -->
+    <section id="evaluation" class="page" hidden>
+      <div class="pagehead">
+        <h1><span class="num">9</span> LLM evaluation (quality gate)</h1>
+        <p class="usecase">Use case: <b>RAG quality gate in CI</b> — catch answer-quality regressions before they ship.</p>
+      </div>
+      <details class="how"><summary>How it works</summary>
+        <ul>
+          <li>A golden set of questions with known answers runs through the real RAG pipeline.</li>
+          <li>Each answer is graded on expected facts (deterministic), relevancy (<code>RelevancyEvaluator</code>) and groundedness (<code>FactCheckingEvaluator</code>) — LLM-as-judge.</li>
+          <li>The same service backs the JUnit suite: <code>./mvnw verify -Pllm-eval</code> fails the build below the pass-rate threshold.</li>
+          <li>Regression demo: rerun with <i>top-k 1</i> and <i>threshold 0.95</i> — retrieval starves and the gate fails.</li>
+        </ul>
+      </details>
+      <div class="row">
+        <button id="evalRun">Run quality gate (default settings)</button>
+        <button class="ghost danger" id="evalRegress">Run with bad retrieval settings</button>
+        <span class="hint">Takes 1–2 minutes on a local 4B model.</span>
+      </div>
+      <div id="evalOut"></div>
+    </section>
+
+  </main>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

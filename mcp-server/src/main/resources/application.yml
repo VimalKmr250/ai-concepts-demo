@@ -1,0 +1,31 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: acme-travel-desk-mcp
+  threads:
+    virtual:
+      enabled: true
+  ai:
+    mcp:
+      server:
+        name: acme-travel-desk
+        version: 1.0.0
+        type: SYNC
+        protocol: STREAMABLE          # Streamable HTTP transport, endpoint below
+        instructions: >
+          Acme Corp travel desk. Tools for currency conversion (travel-policy rates), local time
+          in major cities and 2026 public-holiday checks.
+        streamable-http:
+          mcp-endpoint: /mcp
+        capabilities:
+          tool: true
+          resource: true
+          prompt: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

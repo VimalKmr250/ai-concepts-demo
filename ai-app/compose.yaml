@@ -1,0 +1,30 @@
+# Local infrastructure for the showcase. Spring Boot's Docker Compose support starts this
+# automatically when ai-app runs, and wires the connection details (no URLs/passwords in config).
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.7-pg17
+    environment:
+      POSTGRES_DB: acme
+      POSTGRES_USER: acme
+      POSTGRES_PASSWORD: acme
+    ports:
+      - "5432"
+    labels:
+      # pgvector image isn't named "postgres", so tell Boot which service connection to create
+      org.springframework.boot.service-connection: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  lgtm:
+    # Grafana + Tempo (traces) + Prometheus (metrics) + Loki (logs) + OTel collector in one container
+    image: grafana/otel-lgtm:0.36.0
+    ports:
+      - "3000:3000"   # Grafana UI (admin/admin)
+      - "4317"        # OTLP gRPC
+      - "4318"        # OTLP HTTP
+    volumes:
+      - ./observability/dashboards:/otel-lgtm/acme-dashboards:ro
+      - ./observability/provisioning/acme-dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/acme-dashboards.yaml:ro
+
+volumes:
+  pgdata:
