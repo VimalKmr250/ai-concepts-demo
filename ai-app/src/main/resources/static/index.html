@@ -27,6 +27,8 @@
     <a href="#mcp" data-nav="mcp"><b>7</b> MCP</a>
     <a href="#observability" data-nav="observability"><b>8</b> Observability</a>
     <a href="#evaluation" data-nav="evaluation"><b>9</b> LLM evaluation</a>
+    <div class="navgroup">Learn</div>
+    <a href="concepts.html"><b>?</b> Concepts guide</a>
   </nav>
 
   <main id="main">
@@ -37,6 +39,10 @@
       <p class="lead">A Spring Boot 4 + Spring AI 2 sample for the fictional <b>Acme Corp</b>. Every feature has its own
         use case, seed data and ready-made examples. It runs on a local LLM (LM Studio) and switches to a hosted
         OpenAI-compatible provider with configuration only.</p>
+      <div class="row">
+        <a class="button" href="concepts.html">Read the concepts guide</a>
+        <span class="hint">What each topic is, and what happens behind the scenes on every request.</span>
+      </div>
       <div class="grid" id="featureGrid"></div>
     </section>
 
@@ -45,6 +51,7 @@
       <div class="pagehead">
         <h1><span class="num">1</span> Chat with persistent memory &amp; streaming</h1>
         <p class="usecase">Use case: <b>Acme Connect customer support assistant</b> that remembers the customer — even after the app restarts.</p>
+        <a class="deeplink" href="concepts.html#s1">How this works behind the scenes →</a>
       </div>
       <details class="how"><summary>How it works</summary>
         <ul>
@@ -74,6 +81,7 @@
       <div class="pagehead">
         <h1><span class="num">2</span> Guardrails</h1>
         <p class="usecase">Use case: <b>Acme Bank public chat</b> — protect customers' data and keep the assistant on its job.</p>
+        <a class="deeplink" href="concepts.html#s2">How this works behind the scenes →</a>
       </div>
       <details class="how"><summary>How it works</summary>
         <ul>
@@ -97,6 +105,7 @@
       <div class="pagehead">
         <h1><span class="num">3</span> RAG with citations</h1>
         <p class="usecase">Use case: <b>HR &amp; IT policy Q&amp;A</b> for Acme employees, answered only from the handbook — with sources.</p>
+        <a class="deeplink" href="concepts.html#s3">How this works behind the scenes →</a>
       </div>
       <details class="how"><summary>How it works</summary>
         <ul>
@@ -127,6 +136,7 @@
       <div class="pagehead">
         <h1><span class="num">4</span> Tool calling with human-in-the-loop</h1>
         <p class="usecase">Use case: <b>IT helpdesk agent</b> that looks up employees and laptops, opens tickets — and asks a human before risky actions.</p>
+        <a class="deeplink" href="concepts.html#s4">How this works behind the scenes →</a>
       </div>
       <details class="how"><summary>How it works</summary>
         <ul>
@@ -155,6 +165,7 @@
       <div class="pagehead">
         <h1><span class="num">5</span> Agentic workflow patterns</h1>
         <p class="usecase">The five patterns from <i>Building effective agents</i>, each on an Acme use case, built with plain <code>ChatClient</code> calls.</p>
+        <a class="deeplink" href="concepts.html#s5">How this works behind the scenes →</a>
       </div>
       <div class="tabs" id="agentTabs">
         <button data-pattern="chain" class="active">Chain</button>
@@ -175,6 +186,7 @@
       <div class="pagehead">
         <h1><span class="num">6</span> Structured extraction</h1>
         <p class="usecase">Use cases: <b>accounts-payable invoice processing</b> and <b>meeting notes → action items</b>.</p>
+        <a class="deeplink" href="concepts.html#s6">How this works behind the scenes →</a>
       </div>
       <details class="how"><summary>How it works</summary>
         <ul>
@@ -197,6 +209,7 @@
       <div class="pagehead">
         <h1><span class="num">7</span> Model Context Protocol</h1>
         <p class="usecase">Use case: <b>Acme Travel Desk</b> — an internal MCP server (separate process) whose tools any AI client can use.</p>
+        <a class="deeplink" href="concepts.html#s7">How this works behind the scenes →</a>
       </div>
       <details class="how"><summary>How it works</summary>
         <ul>
@@ -243,6 +256,7 @@
       <div class="pagehead">
         <h1><span class="num">8</span> Observability</h1>
         <p class="usecase">Use case: <b>AI operations</b> — what does each feature cost in tokens, how slow is it, which tools run, what do guardrails block?</p>
+        <a class="deeplink" href="concepts.html#s8">How this works behind the scenes →</a>
       </div>
       <details class="how" open><summary>How it works</summary>
         <ul>
@@ -265,6 +279,7 @@
       <div class="pagehead">
         <h1><span class="num">9</span> LLM evaluation (quality gate)</h1>
         <p class="usecase">Use case: <b>RAG quality gate in CI</b> — catch answer-quality regressions before they ship.</p>
+        <a class="deeplink" href="concepts.html#s9">How this works behind the scenes →</a>
       </div>
       <details class="how"><summary>How it works</summary>
         <ul>

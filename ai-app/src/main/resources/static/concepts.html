@@ -1,0 +1,1020 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Acme AI Showcase Internals</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%234f46e5'/><text x='16' y='22' font-size='16' text-anchor='middle' fill='white' font-family='sans-serif' font-weight='700'>AI</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,500;8..60,600&display=swap">
+<style>
+/* Layout: sticky table of contents on the left, one reading column on the right; diagrams use the full column. */
+:root {
+  --bg: #f3f5f6;
+  --surface: #ffffff;
+  --fg: #18212b;
+  --muted: #5a6573;
+  --line: #d8dee4;
+  --line-strong: #9aa6b2;
+  --accent: #0c6b75;
+  --accent-soft: #dff0f1;
+  --llm: #9a5a14;
+  --llm-soft: #f7ead8;
+  --warn: #a3401f;
+  --warn-soft: #f8e3db;
+  --code-bg: #e9edf0;
+  --serif: "Source Serif 4", Georgia, "Times New Roman", serif;
+  --sans: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Consolas, "Courier New", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #10151a; --surface: #161d24; --fg: #e1e7ec; --muted: #98a4b0; --line: #26313b; --line-strong: #4f5e6c;
+    --accent: #4db6bf; --accent-soft: #14343a; --llm: #e0a35a; --llm-soft: #3a2a16; --warn: #ec8a68; --warn-soft: #3b1f17;
+    --code-bg: #0c1115; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #10151a; --surface: #161d24; --fg: #e1e7ec; --muted: #98a4b0; --line: #26313b; --line-strong: #4f5e6c;
+  --accent: #4db6bf; --accent-soft: #14343a; --llm: #e0a35a; --llm-soft: #3a2a16; --warn: #ec8a68; --warn-soft: #3b1f17;
+  --code-bg: #0c1115; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+[hidden] { display: none !important; }
+.toc .back { display: inline-block; margin: 0 0 18px; font-weight: 600; text-decoration: none; color: var(--accent); }
+.try { font-weight: 600; text-decoration: none; white-space: nowrap; margin-left: 4px; }
+.try:hover, .toc .back:hover { text-decoration: underline; }
+body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 16px; line-height: 1.6; }
+a { color: var(--accent); }
+a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+
+.wrap {
+  display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 56px;
+  max-width: 1180px; margin: 0 auto;
+  padding-block: 48px 96px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.toc { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 24px); align-self: start; font-size: 14px; }
+.toc p { margin: 0 0 10px; font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.toc a { display: grid; grid-template-columns: 22px 1fr; gap: 6px; padding: 5px 8px; border-radius: 6px; color: var(--fg); text-decoration: none; }
+.toc a:hover { background: var(--surface); }
+.toc .n { font-family: var(--mono); font-size: 12px; color: var(--accent); padding-top: 1px; }
+
+main { min-width: 0; }
+header.intro { max-width: 70ch; margin-bottom: 40px; }
+.eyebrow { font-size: 12px; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); font-weight: 600; margin: 0 0 10px; }
+h1 { font-family: var(--serif); font-weight: 600; font-size: clamp(2rem, 4.2vw, 2.9rem); line-height: 1.12; margin: 0 0 16px; text-wrap: balance; letter-spacing: -.01em; }
+h2 { font-family: var(--serif); font-weight: 600; font-size: 1.9rem; line-height: 1.2; margin: 0; text-wrap: balance; }
+h3 { font-size: .8rem; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); margin: 32px 0 10px; font-weight: 600; }
+p, li { max-width: 70ch; }
+.lede { font-size: 1.12rem; color: var(--muted); margin: 0; }
+
+section.topic { padding-block: 44px; border-top: 1px solid var(--line); }
+.topic-head { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; align-items: baseline; margin-bottom: 8px; }
+.topic-num { font-family: var(--mono); font-size: 1rem; color: var(--accent); }
+.usecase { grid-column: 2; margin: 4px 0 0; color: var(--muted); }
+
+code { font-family: var(--mono); font-size: .86em; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+pre { font-family: var(--mono); font-size: 13px; line-height: 1.55; background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; overflow-x: auto; margin: 16px 0; max-width: 100%; }
+pre code { background: none; padding: 0; font-size: inherit; }
+pre .c { color: var(--muted); }
+pre .k { color: var(--accent); }
+pre .m { color: var(--llm); }
+
+ol.steps { counter-reset: s; list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
+ol.steps > li { counter-increment: s; display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 10px; }
+ol.steps > li::before { content: counter(s); font-family: var(--mono); font-size: 12px; color: var(--accent); border: 1px solid var(--accent); border-radius: 50%; width: 22px; height: 22px; display: grid; place-items: center; margin-top: 2px; }
+ul.notes { padding-left: 1.1rem; margin: 0; display: grid; gap: 8px; }
+.files { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.files li code { display: inline-block; }
+
+figure { margin: 24px 0; }
+.fig-scroll { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+figcaption { font-size: 14px; color: var(--muted); margin-top: 10px; max-width: 75ch; }
+svg.dg { display: block; width: 100%; min-width: 760px; height: auto; }
+
+.dg text { fill: var(--fg); font-family: var(--sans); font-size: 12.5px; }
+.dg .t-b { font-weight: 600; }
+.dg .t-sub { fill: var(--muted); font-size: 11px; }
+.dg .t-mono { font-family: var(--mono); font-size: 11px; }
+.dg .t-acc { fill: var(--accent); }
+.dg .t-warn { fill: var(--warn); }
+.dg .t-cap { fill: var(--muted); font-size: 10.5px; letter-spacing: .09em; font-weight: 600; }
+.dg .nd { fill: var(--surface); stroke: var(--line-strong); stroke-width: 1.2; }
+.dg .nd-acc { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.4; }
+.dg .nd-llm { fill: var(--llm-soft); stroke: var(--llm); stroke-width: 1.4; }
+.dg .nd-warn { fill: var(--warn-soft); stroke: var(--warn); stroke-width: 1.4; }
+.dg .nd-note { fill: var(--code-bg); stroke: var(--line-strong); stroke-width: 1; }
+.dg .grp { fill: none; stroke: var(--line-strong); stroke-width: 1.2; stroke-dasharray: 5 4; }
+.dg .ed { stroke: var(--muted); stroke-width: 1.4; fill: none; }
+.dg .ed-acc { stroke: var(--accent); stroke-width: 1.6; fill: none; }
+.dg .ed-warn { stroke: var(--warn); stroke-width: 1.4; fill: none; }
+.dg .dash { stroke-dasharray: 5 4; }
+.dg .life { stroke: var(--line-strong); stroke-width: 1; stroke-dasharray: 3 4; }
+.dg .mk { fill: var(--muted); }
+.dg .mk-acc { fill: var(--accent); }
+.dg .mk-warn { fill: var(--warn); }
+
+.patterns { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin: 20px 0; }
+.pattern { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; min-width: 0; display: grid; gap: 8px; align-content: start; }
+.pattern h4 { margin: 0; font-size: 1rem; }
+.pattern .meta { font-family: var(--mono); font-size: 12px; color: var(--accent); }
+.pattern p { margin: 0; font-size: 14.5px; }
+.pattern svg { width: 100%; height: auto; display: block; }
+
+.tablewrap { overflow-x: auto; margin: 16px 0; }
+table { border-collapse: collapse; width: 100%; font-size: 14.5px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); background: var(--code-bg); font-weight: 600; }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pill { display: inline-block; font-size: 12px; font-weight: 600; padding: 1px 9px; border-radius: 999px; white-space: nowrap; }
+.pill.ok { background: var(--accent-soft); color: var(--accent); }
+.pill.bad { background: var(--warn-soft); color: var(--warn); }
+
+.callout { border-left: 3px solid var(--llm); background: var(--llm-soft); padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 20px 0; max-width: 72ch; }
+.callout p { margin: 0; }
+
+@media (max-width: 920px) {
+  .wrap { grid-template-columns: minmax(0, 1fr); gap: 24px; padding-block: 28px 72px; }
+  .toc { position: static; }
+  .toc ol { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
+  h2 { font-size: 1.55rem; }
+}
+
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <nav class="toc" aria-label="Contents">
+    <a class="back" href="/">← Back to the demos</a>
+    <p>Contents</p>
+    <ol>
+      <li><a href="#s0"><span class="n">0</span><span>The common chassis</span></a></li>
+      <li><a href="#s1"><span class="n">1</span><span>Chat memory &amp; streaming</span></a></li>
+      <li><a href="#s2"><span class="n">2</span><span>Guardrails</span></a></li>
+      <li><a href="#s3"><span class="n">3</span><span>RAG with citations</span></a></li>
+      <li><a href="#s4"><span class="n">4</span><span>Tools + human approval</span></a></li>
+      <li><a href="#s5"><span class="n">5</span><span>Agent patterns</span></a></li>
+      <li><a href="#s6"><span class="n">6</span><span>Structured extraction</span></a></li>
+      <li><a href="#s7"><span class="n">7</span><span>MCP</span></a></li>
+      <li><a href="#s8"><span class="n">8</span><span>Observability</span></a></li>
+      <li><a href="#s9"><span class="n">9</span><span>LLM evaluation</span></a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <header class="intro">
+      <p class="eyebrow">Spring Boot 4.1 · Spring AI 2.0 · Java 25 · LM Studio</p>
+      <h1>What happens behind each demo</h1>
+      <p class="lede">For every topic in the Acme AI Showcase: the concept, why enterprises care, and the exact path a request takes through the code. Section&nbsp;0 describes the plumbing that every demo shares, so read it first.</p>
+    </header>
+
+    <!-- ===================================================================== 0 -->
+    <section class="topic" id="s0">
+      <div class="topic-head"><span class="topic-num">00</span><h2>The common chassis: ChatClient and advisors</h2>
+        <p class="usecase">Shared by all nine demos.</p></div>
+
+      <h3>The idea</h3>
+      <p>Spring AI gives you provider-neutral building blocks. <code>ChatModel</code> sends one request to an LLM, <code>EmbeddingModel</code> turns text into vectors, and <code>VectorStore</code> stores and searches those vectors. On top sits <code>ChatClient</code>, a fluent API that pushes every request through an ordered chain of <b>advisors</b>. An advisor works like a servlet filter or AOP around-advice: it sees the request on the way in and the response on the way out, and it can change either, answer on its own without calling the model, or call the rest of the chain several times.</p>
+      <p>Almost every enterprise concern in this project is an advisor: memory, guardrails, retrieval, tool execution, metrics and model quirks. Feature code stays short because each concern sits in its own layer.</p>
+
+      <figure>
+        <div class="fig-scroll">
+          <svg class="dg" viewBox="0 0 960 240" role="img" aria-label="A request passes through eight ordered stages from the controller to the model, and the response returns through them in reverse; the tool-calling advisor loops back to the model while it asks for tools.">
+            <defs>
+              <marker id="m0" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk"/></marker>
+              <marker id="m0a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk-acc"/></marker>
+            </defs>
+            <line x1="15" y1="46" x2="945" y2="46" class="ed" marker-end="url(#m0)"/>
+            <text x="15" y="34" class="t-sub">request: Prompt + options + context map</text>
+            <g>
+              <rect x="15" y="66" width="104" height="70" rx="7" class="nd"/>
+              <text x="67" y="91" text-anchor="middle" class="t-b">Controller</text>
+              <text x="67" y="106" text-anchor="middle" class="t-sub">your code</text>
+              <text x="67" y="120" text-anchor="middle" class="t-sub t-mono">prompt().call()</text>
+
+              <rect x="133" y="66" width="104" height="70" rx="7" class="nd-acc"/>
+              <text x="185" y="91" text-anchor="middle" class="t-b">Metrics</text>
+              <text x="185" y="106" text-anchor="middle" class="t-sub">HIGHEST</text>
+              <text x="185" y="120" text-anchor="middle" class="t-sub">all demos</text>
+
+              <rect x="251" y="66" width="104" height="70" rx="7" class="nd"/>
+              <text x="303" y="91" text-anchor="middle" class="t-b">Guardrails</text>
+              <text x="303" y="106" text-anchor="middle" class="t-sub">+100 … +130</text>
+              <text x="303" y="120" text-anchor="middle" class="t-sub">demo 2</text>
+
+              <rect x="369" y="66" width="104" height="70" rx="7" class="nd"/>
+              <text x="421" y="91" text-anchor="middle" class="t-b">Chat memory</text>
+              <text x="421" y="106" text-anchor="middle" class="t-sub">+200</text>
+              <text x="421" y="120" text-anchor="middle" class="t-sub">demos 1, 2</text>
+
+              <rect x="487" y="66" width="104" height="70" rx="7" class="nd"/>
+              <text x="539" y="91" text-anchor="middle" class="t-b">Output guard</text>
+              <text x="539" y="106" text-anchor="middle" class="t-sub">+250</text>
+              <text x="539" y="120" text-anchor="middle" class="t-sub">demo 2</text>
+
+              <rect x="605" y="66" width="104" height="70" rx="7" class="nd"/>
+              <text x="657" y="91" text-anchor="middle" class="t-b">Tool calling</text>
+              <text x="657" y="106" text-anchor="middle" class="t-sub">+300, loops</text>
+              <text x="657" y="120" text-anchor="middle" class="t-sub">demos 4, 7</text>
+
+              <rect x="723" y="66" width="104" height="70" rx="7" class="nd-acc"/>
+              <text x="775" y="91" text-anchor="middle" class="t-b">Model quirks</text>
+              <text x="775" y="106" text-anchor="middle" class="t-sub">LOWEST − 100</text>
+              <text x="775" y="120" text-anchor="middle" class="t-sub">all demos</text>
+
+              <rect x="841" y="66" width="104" height="70" rx="7" class="nd-llm"/>
+              <text x="893" y="91" text-anchor="middle" class="t-b">ChatModel</text>
+              <text x="893" y="106" text-anchor="middle" class="t-sub">HTTP POST</text>
+              <text x="893" y="120" text-anchor="middle" class="t-sub t-mono">:1234/v1</text>
+            </g>
+            <line x1="945" y1="160" x2="15" y2="160" class="ed" marker-end="url(#m0)"/>
+            <text x="15" y="178" class="t-sub">response: ChatResponse + context map (after-steps run in reverse order)</text>
+            <path d="M893,136 V212 H657 V140" class="ed-acc dash" marker-end="url(#m0a)"/>
+            <text x="775" y="230" text-anchor="middle" class="t-sub t-acc">tool_calls? execute the tools, then call the model again</text>
+          </svg>
+        </div>
+        <figcaption>The advisor chain, ordered by <code>getOrder()</code> (lower runs first on the way in). Each demo adds only the advisors it needs; demo 3 adds <code>RetrievalAugmentationAdvisor</code> at order 0. The outermost and innermost advisors come from <code>AiClients.forFeature()</code>.</figcaption>
+      </figure>
+
+      <h3>Behind the scenes</h3>
+      <ol class="steps">
+        <li><span>Each demo asks <code>AiClients.forFeature("rag")</code> for its own <code>ChatClient.Builder</code>. It comes preloaded with <code>FeatureMetricsAdvisor</code> (outermost, for metrics and spans per feature) and <code>ModelQuirksAdvisor</code> (innermost, closest to the model).</span></li>
+        <li><span>The demo adds its system prompt and its own advisors, such as memory, guardrails or RAG.</span></li>
+        <li><span>On <code>.call()</code>, ChatClient builds a <code>Prompt</code> (system message, history, user message), merges the options (model name, temperature, tool definitions), sorts the advisors and auto-registers Spring AI 2's <code>ToolCallingAdvisor</code> at order +300. A final <code>ChatModelCallAdvisor</code> at the bottom of the chain makes the actual model call.</span></li>
+        <li><span><code>OpenAiChatModel</code> turns the prompt into an OpenAI Chat Completions request and sends it with the official <code>openai-java</code> SDK to <code>{base-url}/chat/completions</code>. By default the base URL is LM Studio at <code>http://localhost:1234/v1</code>.</span></li>
+        <li><span>Each advisor can write into a <b>context map</b> that travels with the request and is copied onto the response. That's how the UI later shows "what the LLM saw", which chunks were retrieved, and which guard answered.</span></li>
+      </ol>
+
+      <h3>Why switching providers is config-only</h3>
+      <p>LM Studio implements the same HTTP protocol as OpenAI. Nothing in the feature code imports a provider class, so moving to a hosted model only changes <code>base-url</code>, <code>api-key</code> and the model names (the <code>openai</code> profile). The same holds for Azure OpenAI, Groq, vLLM, or Ollama's <code>/v1</code> endpoint.</p>
+      <p><code>ModelQuirksAdvisor</code> handles one local-model problem. Qwen3 "hybrid" models reason out loud by default. The advisor appends Qwen's <code>/no_think</code> switch to every system prompt and strips any <code>&lt;think&gt;…&lt;/think&gt;</code> block from the answer, including blocks that arrive across streamed chunks. LM Studio already moves reasoning into a separate <code>reasoning_content</code> field, so the stripping is a safety net. The <code>openai</code> profile turns both off.</p>
+
+      <h3>In the code</h3>
+      <ul class="files"><li><code>config/AiClients.java</code></li><li><code>config/ModelQuirksAdvisor.java</code></li><li><code>observability/FeatureMetricsAdvisor.java</code></li><li><code>application.yml</code></li><li><code>application-openai.yml</code></li></ul>
+    </section>
+
+    <!-- ===================================================================== 1 -->
+    <section class="topic" id="s1">
+      <div class="topic-head"><span class="topic-num">01</span><h2>Chat with persistent memory and streaming</h2>
+        <p class="usecase">Use case: Acme Connect's support assistant remembers the customer, even after the server restarts. <a class="try" href="/#chat">Open demo 1 →</a></p></div>
+
+      <h3>The idea</h3>
+      <p>LLM APIs are <b>stateless</b>. Every request stands alone, and the model remembers nothing between calls. "Memory" means the application sends the earlier conversation again with each new message. You decide what to send: the last N messages (a window), a running summary, or facts retrieved from a long-term store. Keeping that history in a database means any app instance can serve the next turn, conversations survive restarts and deployments, and app servers stay stateless and easy to scale.</p>
+      <p><b>Streaming</b> addresses perceived speed. A model produces its answer one token at a time. With <code>stream: true</code> the provider sends each token chunk as soon as it exists, so the first words show up in about a second instead of after the whole answer is done.</p>
+
+      <h3>What the model actually receives on turn 2</h3>
+<pre><code><span class="c">// one request to /v1/chat/completions, assembled by MessageChatMemoryAdvisor</span>
+[<span class="k">system</span>]    You are "Ava", the customer-support assistant of Acme Connect … /no_think
+[<span class="k">user</span>]      Hi, I'm Priya. I'm on the Pro plan and my router keeps dropping Wi-Fi…   <span class="c">← from Postgres</span>
+[<span class="k">assistant</span>] Hi Priya! I'm sorry to hear about the Wi-Fi issues…                      <span class="c">← from Postgres</span>
+[<span class="k">user</span>]      Remind me: what's my name and which plan am I on?                       <span class="c">← new message</span></code></pre>
+
+      <h3>Behind the scenes</h3>
+      <ol class="steps">
+        <li><span>The browser POSTs <code>{conversationId, message}</code> to <code>/api/chat/stream</code>. It uses <code>fetch</code> and reads the response body as a stream, because the browser's <code>EventSource</code> can only make GET requests.</span></li>
+        <li><span><code>SupportChatService</code> passes the conversation id to the advisors as <code>ChatMemory.CONVERSATION_ID</code> in the advisor context.</span></li>
+        <li><span><code>MessageChatMemoryAdvisor</code> loads the history through <code>MessageWindowChatMemory</code> (the last 20 messages) and <code>JdbcChatMemoryRepository</code>, which reads the <code>spring_ai_chat_memory</code> table ordered by sequence. It puts that history between the system prompt and the new message, and saves the new user message right away.</span></li>
+        <li><span><code>.stream().content()</code> calls the model in streaming mode and returns a <code>Flux&lt;String&gt;</code> of token chunks.</span></li>
+        <li><span>The controller wraps every chunk as a Server-Sent Event: <code>data:{"t":" Pri"}</code>. The JSON wrapper keeps leading spaces and line breaks, which plain SSE <code>data:</code> lines would drop. A final <code>event: done</code> closes the stream, and errors arrive as an <code>event: error</code>.</span></li>
+        <li><span>When the stream finishes, <code>ChatClientMessageAggregator</code> joins the chunks into one assistant message, and the memory advisor saves it. On the next turn the cycle repeats with one more pair of rows.</span></li>
+      </ol>
+
+      <h3>Design decisions and lessons</h3>
+      <ul class="notes">
+        <li>Flyway creates the memory table (<code>V1__schema.sql</code>), not Spring AI's schema initializer, so the schema is versioned with the app (<code>initialize-schema: never</code>).</li>
+        <li>Docker Compose runs with <code>lifecycle-management: start-only</code>, so Postgres keeps running while you restart the app. That's what makes the "restart and it still remembers" demo work.</li>
+        <li>The window counts messages, not tokens. A long conversation with big messages can still exceed the 16k context window. Production systems add token-based trimming or summarization.</li>
+        <li>Conversation ids are global. The guardrails demo stores its messages under <code>bank-demo</code> in the same table, which is how you can inspect what was stored there.</li>
+      </ul>
+      <h3>In the code</h3>
+      <ul class="files"><li><code>chat/SupportChatService.java</code></li><li><code>chat/ChatController.java</code></li><li><code>db/migration/V1__schema.sql</code></li><li><code>static/app.js · sendChat()</code></li></ul>
+    </section>
+
+    <!-- ===================================================================== 2 -->
+    <section class="topic" id="s2">
+      <div class="topic-head"><span class="topic-num">02</span><h2>Guardrails</h2>
+        <p class="usecase">Use case: Acme Bank's public chat must not send customer data to the model provider and must not be hijacked. <a class="try" href="/#guardrails">Open demo 2 →</a></p></div>
+
+      <h3>The idea</h3>
+      <p>An LLM follows instructions from anyone who can type into it, and its output is probabilistic. Guardrails are checks you control that sit around the model. <b>Input guards</b> decide what may reach the model; <b>output guards</b> decide what may reach the user. In enterprises the drivers are:</p>
+      <ul class="notes">
+        <li><b>Data minimization.</b> GDPR and data processing agreements limit what you may send to a third-party API, and card numbers have no business leaving your network.</li>
+        <li><b>Prompt injection.</b> OWASP ranks it as the top LLM risk (LLM01): a user tries to override your instructions.</li>
+        <li><b>Scope.</b> A bank assistant writing poems costs tokens and creates brand risk.</li>
+        <li><b>Leakage.</b> System prompts often contain business rules you don't want published.</li>
+      </ul>
+
+      <figure>
+        <div class="fig-scroll">
+          <svg class="dg" viewBox="0 0 960 205" role="img" aria-label="Guardrail pipeline: mask PII, injection check, denylist, topic guard, memory, LLM, output guard. The injection, denylist and topic checks can end the request early without reaching the model or memory.">
+            <defs>
+              <marker id="m2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk"/></marker>
+              <marker id="m2w" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk-warn"/></marker>
+            </defs>
+            <rect x="17" y="30" width="110" height="58" rx="7" class="nd-acc"/>
+            <text x="72" y="55" text-anchor="middle" class="t-b">Mask PII</text>
+            <text x="72" y="71" text-anchor="middle" class="t-sub t-mono">[CARD] [EMAIL]</text>
+            <rect x="153" y="30" width="110" height="58" rx="7" class="nd"/>
+            <text x="208" y="55" text-anchor="middle" class="t-b">Injection check</text>
+            <text x="208" y="71" text-anchor="middle" class="t-sub">5 rule families</text>
+            <rect x="289" y="30" width="110" height="58" rx="7" class="nd"/>
+            <text x="344" y="55" text-anchor="middle" class="t-b">Denylist</text>
+            <text x="344" y="71" text-anchor="middle" class="t-sub">SafeGuardAdvisor</text>
+            <rect x="425" y="30" width="110" height="58" rx="7" class="nd"/>
+            <text x="480" y="55" text-anchor="middle" class="t-b">Topic guard</text>
+            <text x="480" y="71" text-anchor="middle" class="t-sub">keywords, then LLM</text>
+            <rect x="561" y="30" width="110" height="58" rx="7" class="nd"/>
+            <text x="616" y="55" text-anchor="middle" class="t-b">Chat memory</text>
+            <text x="616" y="71" text-anchor="middle" class="t-sub">masked text only</text>
+            <rect x="697" y="30" width="110" height="58" rx="7" class="nd-llm"/>
+            <text x="752" y="55" text-anchor="middle" class="t-b">LLM</text>
+            <text x="752" y="71" text-anchor="middle" class="t-sub">qwen3-4b</text>
+            <rect x="833" y="30" width="110" height="58" rx="7" class="nd-acc"/>
+            <text x="888" y="55" text-anchor="middle" class="t-b">Output guard</text>
+            <text x="888" y="71" text-anchor="middle" class="t-sub">canary · copy · PII</text>
+            <line x1="127" y1="59" x2="151" y2="59" class="ed" marker-end="url(#m2)"/>
+            <line x1="263" y1="59" x2="287" y2="59" class="ed" marker-end="url(#m2)"/>
+            <line x1="399" y1="59" x2="423" y2="59" class="ed" marker-end="url(#m2)"/>
+            <line x1="535" y1="59" x2="559" y2="59" class="ed" marker-end="url(#m2)"/>
+            <line x1="671" y1="59" x2="695" y2="59" class="ed" marker-end="url(#m2)"/>
+            <line x1="807" y1="59" x2="831" y2="59" class="ed" marker-end="url(#m2)"/>
+            <line x1="208" y1="88" x2="208" y2="126" class="ed-warn dash" marker-end="url(#m2w)"/>
+            <text x="208" y="144" text-anchor="middle" class="t-warn">HTTP 400 problem</text>
+            <line x1="344" y1="88" x2="344" y2="126" class="ed-warn dash" marker-end="url(#m2w)"/>
+            <text x="344" y="144" text-anchor="middle" class="t-warn">canned refusal</text>
+            <line x1="480" y1="88" x2="480" y2="126" class="ed-warn dash" marker-end="url(#m2w)"/>
+            <text x="480" y="144" text-anchor="middle" class="t-warn">polite refusal</text>
+            <path d="M153,168 V176 H535 V168" class="ed"/>
+            <text x="344" y="194" text-anchor="middle" class="t-sub">the model and the memory are never reached</text>
+            <line x1="888" y1="88" x2="888" y2="126" class="ed" marker-end="url(#m2)"/>
+            <text x="888" y="144" text-anchor="middle">answer to user</text>
+            <text x="888" y="160" text-anchor="middle" class="t-sub">withheld or masked</text>
+          </svg>
+        </div>
+        <figcaption>Input guards run before the memory advisor, so a blocked or refused request leaves no trace in the model provider's logs or in the database. The output guard sits inside the memory advisor (+250 versus +200), so memory stores the filtered answer, not the raw one.</figcaption>
+      </figure>
+
+      <h3>Behind the scenes</h3>
+      <ol class="steps">
+        <li><span><b>PII redaction (+100).</b> Regex detectors run in a fixed order: email, IBAN, card, SSN, phone. A card number must be 13–19 digits <i>and</i> pass the Luhn checksum, so order numbers survive. A phone number must have 8–15 digits. Matches become placeholders through <code>prompt.augmentUserMessage()</code>. The masked text and the counts per type go into the context map and become the UI's "What the LLM saw" panel.</span></li>
+        <li><span><b>Injection check (+110).</b> Five pattern families: override instructions, reveal the system prompt, role hijack ("you are now DAN"), jailbreak keywords, and fake system tags. A match throws <code>GuardrailViolationException</code>. <code>ApiExceptionHandler</code> turns it into an RFC 9457 problem detail with <code>guard</code> and <code>rule</code> fields and status 400. An optional LLM classifier can run as a second line (<code>acme.guardrails.llm-injection-classifier</code>).</span></li>
+        <li><span><b>Denylist (+120).</b> Spring AI's built-in <code>SafeGuardAdvisor</code> answers with its fixed refusal when the input contains a denylisted term.</span></li>
+        <li><span><b>Topic guard (+130).</b> A keyword match on the allowed banking topics passes immediately. Otherwise a separate, short LLM call classifies the message as ON_TOPIC or OFF_TOPIC. An off-topic message gets a canned reply built as a <code>ChatClientResponse</code> without calling the chain, so the main model and the memory are never involved.</span></li>
+        <li><span><b>Output guard (+250).</b> After the model answers, it withholds the reply if it contains the <b>canary token</b> planted in the system prompt (<code>ACME-CANARY-7Q2X</code>) or 12+ consecutive words copied from the prompt. It also withholds denylisted terms and masks PII the model produced.</span></li>
+        <li><span>Every intervention increments <code>acme.guardrails.events{guard, action}</code>, which feeds the Grafana dashboard.</span></li>
+      </ol>
+
+      <h3>Design decisions and lessons</h3>
+      <ul class="notes">
+        <li>The first leak detector matched any 6-word overlap with the system prompt and blocked a normal answer ("use the Acme Bank app or a branch"). A canary token plus a 12-word window is the standard way to catch real prompt dumps without false alarms.</li>
+        <li>Output masking also hid the bank's own support phone number. The fix was to keep phone numbers out of the system prompt. Guards have to agree with the prompt they protect.</li>
+        <li>Regex PII detection doesn't understand language like named-entity recognition does, and heuristic injection rules can be bypassed with paraphrases, other languages or encodings. Real deployments layer a classifier model or a DLP service on top.</li>
+        <li>Not covered here: <b>indirect</b> injection, where instructions hide inside retrieved documents or tool results (see demos 3, 4 and 7). That needs separate handling of untrusted content.</li>
+      </ul>
+      <h3>In the code</h3>
+      <ul class="files"><li><code>guardrails/GuardrailAdvisors.java</code></li><li><code>guardrails/PiiRedactor.java</code></li><li><code>guardrails/PromptInjectionDetector.java</code></li><li><code>guardrails/BankingAssistantService.java</code></li><li><code>config/ApiExceptionHandler.java</code></li></ul>
+    </section>
+
+    <!-- ===================================================================== 3 -->
+    <section class="topic" id="s3">
+      <div class="topic-head"><span class="topic-num">03</span><h2>RAG with citations</h2>
+        <p class="usecase">Use case: employees ask HR, IT and finance policy questions and get answers from the Acme handbook, with sources. <a class="try" href="/#rag">Open demo 3 →</a></p></div>
+
+      <h3>The idea</h3>
+      <p>The model knows nothing about Acme's handbook, and fine-tuning is expensive and goes stale whenever a policy changes. <b>Retrieval-augmented generation</b> finds the relevant passages at question time and puts them into the prompt. Answers stay current, sources can be checked, and "I don't know" is possible.</p>
+      <p>Retrieval relies on <b>embeddings</b>. An embedding model maps a piece of text to a vector (here 768 numbers) so that texts with similar meaning land close together, measured by cosine similarity. "How fast must I report a lost laptop?" lands near the paragraph about lost devices even though they share few words. A vector database indexes these vectors for fast nearest-neighbour search.</p>
+
+      <figure>
+        <div class="fig-scroll">
+          <svg class="dg" viewBox="0 0 960 316" role="img" aria-label="RAG has two paths sharing pgvector. Ingest: file, Tika, splitter, metadata, embedding model, insert into pgvector. Ask: question, embed, similarity search against pgvector, augment the prompt with numbered sources, LLM, answer with citations.">
+            <defs>
+              <marker id="m3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk"/></marker>
+              <marker id="m3a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk-acc"/></marker>
+            </defs>
+            <text x="20" y="24" class="t-cap">INGEST · STARTUP OR UPLOAD</text>
+            <rect x="20" y="36" width="124" height="52" rx="7" class="nd"/>
+            <text x="82" y="58" text-anchor="middle" class="t-b">Handbook file</text>
+            <text x="82" y="74" text-anchor="middle" class="t-sub">PDF · MD · DOCX</text>
+            <rect x="170" y="36" width="124" height="52" rx="7" class="nd"/>
+            <text x="232" y="58" text-anchor="middle" class="t-b">Tika reader</text>
+            <text x="232" y="74" text-anchor="middle" class="t-sub">extract text</text>
+            <rect x="320" y="36" width="124" height="52" rx="7" class="nd"/>
+            <text x="382" y="58" text-anchor="middle" class="t-b">Token splitter</text>
+            <text x="382" y="74" text-anchor="middle" class="t-sub">~180-token chunks</text>
+            <rect x="470" y="36" width="124" height="52" rx="7" class="nd"/>
+            <text x="532" y="58" text-anchor="middle" class="t-b">Tag + hash</text>
+            <text x="532" y="74" text-anchor="middle" class="t-sub">source · category</text>
+            <rect x="620" y="36" width="124" height="52" rx="7" class="nd-llm"/>
+            <text x="682" y="58" text-anchor="middle" class="t-b">Embedding model</text>
+            <text x="682" y="74" text-anchor="middle" class="t-sub">768-dim vectors</text>
+            <line x1="144" y1="62" x2="168" y2="62" class="ed" marker-end="url(#m3)"/>
+            <line x1="294" y1="62" x2="318" y2="62" class="ed" marker-end="url(#m3)"/>
+            <line x1="444" y1="62" x2="468" y2="62" class="ed" marker-end="url(#m3)"/>
+            <line x1="594" y1="62" x2="618" y2="62" class="ed" marker-end="url(#m3)"/>
+            <path d="M744,62 H855 V134" class="ed" marker-end="url(#m3)"/>
+            <text x="800" y="54" text-anchor="middle" class="t-sub">INSERT rows</text>
+
+            <rect x="770" y="136" width="170" height="56" rx="7" class="nd-acc"/>
+            <text x="855" y="160" text-anchor="middle" class="t-b">pgvector</text>
+            <text x="855" y="176" text-anchor="middle" class="t-sub">vector_store · HNSW, cosine</text>
+
+            <path d="M370,250 V164 H768" class="ed-acc" marker-end="url(#m3a)"/>
+            <text x="570" y="156" text-anchor="middle" class="t-sub t-acc">query vector + filter (category == 'IT')</text>
+            <path d="M770,180 H394 V248" class="ed" marker-end="url(#m3)"/>
+            <text x="570" y="198" text-anchor="middle" class="t-sub">top-k chunks + similarity scores</text>
+
+            <text x="20" y="240" class="t-cap">ASK</text>
+            <rect x="20" y="252" width="124" height="52" rx="7" class="nd"/>
+            <text x="82" y="274" text-anchor="middle" class="t-b">Question</text>
+            <text x="82" y="290" text-anchor="middle" class="t-sub">+ optional filter</text>
+            <rect x="170" y="252" width="124" height="52" rx="7" class="nd-llm"/>
+            <text x="232" y="274" text-anchor="middle" class="t-b">Embed question</text>
+            <text x="232" y="290" text-anchor="middle" class="t-sub">same model</text>
+            <rect x="320" y="252" width="124" height="52" rx="7" class="nd-acc"/>
+            <text x="382" y="274" text-anchor="middle" class="t-b">Similarity search</text>
+            <text x="382" y="290" text-anchor="middle" class="t-sub">top-k 4 · ≥ 0.55</text>
+            <rect x="470" y="252" width="124" height="52" rx="7" class="nd"/>
+            <text x="532" y="274" text-anchor="middle" class="t-b">Augment prompt</text>
+            <text x="532" y="290" text-anchor="middle" class="t-sub">[1] [2] + rules</text>
+            <rect x="620" y="252" width="124" height="52" rx="7" class="nd-llm"/>
+            <text x="682" y="274" text-anchor="middle" class="t-b">LLM</text>
+            <text x="682" y="290" text-anchor="middle" class="t-sub">answers with [n]</text>
+            <rect x="770" y="252" width="124" height="52" rx="7" class="nd"/>
+            <text x="832" y="274" text-anchor="middle" class="t-b">Answer</text>
+            <text x="832" y="290" text-anchor="middle" class="t-sub">+ citations</text>
+            <line x1="144" y1="278" x2="168" y2="278" class="ed" marker-end="url(#m3)"/>
+            <line x1="444" y1="278" x2="468" y2="278" class="ed" marker-end="url(#m3)"/>
+            <line x1="594" y1="278" x2="618" y2="278" class="ed" marker-end="url(#m3)"/>
+            <line x1="744" y1="278" x2="768" y2="278" class="ed" marker-end="url(#m3)"/>
+          </svg>
+        </div>
+        <figcaption>Both paths must use the same embedding model; otherwise the question's vector and the stored vectors live in different spaces. Before ingesting, a file's sha256 is compared with the <code>kb_document</code> registry: an unchanged file is skipped, and a changed file has its old chunks deleted first.</figcaption>
+      </figure>
+
+      <h3>Behind the scenes · ingest</h3>
+      <ol class="steps">
+        <li><span><code>HandbookLoader</code> runs on a virtual thread after startup, so the app starts even when the embedding model is down. Uploads and the "Reload sample handbook" button go through the same <code>IngestionService</code>.</span></li>
+        <li><span><code>TikaDocumentReader</code> detects the format and extracts plain text, using PDFBox for the PDF.</span></li>
+        <li><span><code>TokenTextSplitter</code> cuts the text into ~180-token chunks at sentence boundaries, giving 2–3 chunks per handbook file.</span></li>
+        <li><span>Each chunk gets <code>source</code>, <code>category</code> and <code>sha256</code> metadata, so search can filter on it and re-ingestion can find and delete it.</span></li>
+        <li><span><code>PgVectorStore.add()</code> calls the embedding model (LM Studio <code>/v1/embeddings</code>, nomic-embed-text) and inserts each row (id, content, JSONB metadata, <code>vector(768)</code>) into <code>vector_store</code>, which has an HNSW index for approximate nearest-neighbour search.</span></li>
+      </ol>
+      <h3>Behind the scenes · ask</h3>
+      <ol class="steps">
+        <li><span><code>RetrievalAugmentationAdvisor</code> takes the user's question. An optional <code>RewriteQueryTransformer</code> can rephrase vague questions first; it's off by default because it costs an extra LLM call.</span></li>
+        <li><span><code>VectorStoreDocumentRetriever</code> embeds the question and searches for the top 4 chunks with similarity ≥ 0.55. If the UI sets a category, the request carries the filter <code>category == 'IT'</code>, which Spring AI translates from its portable filter language into a JSONB predicate in SQL. The category comes from an enum, so user text never reaches the filter.</span></li>
+        <li><span><code>ContextualQueryAugmenter</code> formats the chunks as numbered sources (<code>[1] (it-security-policy.md) …</code>) into a template with rules: cite like [1], use only these sources, and reply with an exact "not found" sentence otherwise. If <i>no</i> chunk passed the threshold, a different template makes the model say "I couldn't find that in the Acme handbook documents."</span></li>
+        <li><span>The retrieved chunks travel back in the response context (<code>DOCUMENT_CONTEXT</code>). The service turns them into citations with their similarity scores and marks a source <b>cited</b> when the answer contains its [n].</span></li>
+      </ol>
+      <h3>Design decisions and lessons</h3>
+      <ul class="notes">
+        <li>Chunk size is a trade-off. Big chunks dilute similarity and answers miss details; small chunks lose surrounding context. With 350-token chunks the lost-laptop question retrieved a chunk without the "within 1 hour" rule; at 180 tokens the answer included it.</li>
+        <li>The vector dimension (768) is fixed when the table is created. A different embedding model means re-creating the table and re-ingesting, which the <code>force=true</code> option supports.</li>
+        <li>Small models sometimes answer correctly but cite the wrong [n]. Demo 9 measures this.</li>
+        <li>nomic-embed-text retrieves better with task prefixes (<code>search_query:</code> / <code>search_document:</code>). They're left out to keep the code provider-neutral.</li>
+      </ul>
+      <h3>In the code</h3>
+      <ul class="files"><li><code>rag/IngestionService.java</code></li><li><code>rag/PolicyQaService.java</code></li><li><code>rag/HandbookLoader.java</code></li><li><code>demo/handbook/*</code></li></ul>
+    </section>
+
+    <!-- ===================================================================== 4 -->
+    <section class="topic" id="s4">
+      <div class="topic-head"><span class="topic-num">04</span><h2>Tool calling with human-in-the-loop</h2>
+        <p class="usecase">Use case: an IT helpdesk agent looks up employees and laptops and opens tickets by itself, but a person must approve password resets and hardware loans. <a class="try" href="/#helpdesk">Open demo 4 →</a></p></div>
+
+      <h3>The idea</h3>
+      <p>With <b>tool calling</b> (also called function calling), you send the model a list of tools, each with a name, a description and a JSON schema for its parameters. Instead of text, the model can reply with <code>tool_calls</code>: "call <code>lookupEmployee</code> with <code>{"username":"jdoe"}</code>". Your application runs the function and sends the result back as a tool message, and the model continues until it can give a final answer. <b>The model never executes anything; your code does.</b> That's the control point.</p>
+      <p>An <b>agent</b> is this loop running freely: the model decides which tools to use and in what order. The more side effects the tools have, the more you need controls: least-privilege tools, an audit log, and human approval for actions you can't undo.</p>
+
+      <figure>
+        <div class="fig-scroll">
+          <svg class="dg" viewBox="0 0 940 475" role="img" aria-label="Sequence: the model requests resetPassword, the approval gate stops the loop and the agent returns 202 with an approval id; after the supervisor approves, the agent runs the tool, replays the conversation, and the model writes the final answer.">
+            <defs>
+              <marker id="m4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk"/></marker>
+              <marker id="m4a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk-acc"/></marker>
+            </defs>
+            <rect x="5" y="10" width="150" height="40" rx="7" class="nd"/>
+            <text x="80" y="27" text-anchor="middle" class="t-b">Browser</text>
+            <text x="80" y="42" text-anchor="middle" class="t-sub">helpdesk page</text>
+            <rect x="195" y="10" width="150" height="40" rx="7" class="nd"/>
+            <text x="270" y="27" text-anchor="middle" class="t-b">HelpdeskAgent</text>
+            <text x="270" y="42" text-anchor="middle" class="t-sub">service</text>
+            <rect x="395" y="10" width="150" height="40" rx="7" class="nd-acc"/>
+            <text x="470" y="27" text-anchor="middle" class="t-b">ToolCallingAdvisor</text>
+            <text x="470" y="42" text-anchor="middle" class="t-sub">+ approval gate</text>
+            <rect x="595" y="10" width="150" height="40" rx="7" class="nd-llm"/>
+            <text x="670" y="27" text-anchor="middle" class="t-b">LLM</text>
+            <text x="670" y="42" text-anchor="middle" class="t-sub">qwen3-4b</text>
+            <rect x="785" y="10" width="150" height="40" rx="7" class="nd"/>
+            <text x="860" y="27" text-anchor="middle" class="t-b">Approver</text>
+            <text x="860" y="42" text-anchor="middle" class="t-sub">IT supervisor</text>
+            <line x1="80" y1="50" x2="80" y2="468" class="life"/>
+            <line x1="270" y1="50" x2="270" y2="468" class="life"/>
+            <line x1="470" y1="50" x2="470" y2="468" class="life"/>
+            <line x1="670" y1="50" x2="670" y2="468" class="life"/>
+            <line x1="860" y1="50" x2="860" y2="468" class="life"/>
+
+            <line x1="80" y1="82" x2="268" y2="82" class="ed" marker-end="url(#m4)"/>
+            <text x="175" y="76" text-anchor="middle" class="t-sub">"reset password for asmith"</text>
+            <line x1="270" y1="112" x2="468" y2="112" class="ed" marker-end="url(#m4)"/>
+            <text x="370" y="106" text-anchor="middle" class="t-sub">prompt + tool schemas</text>
+            <line x1="470" y1="142" x2="668" y2="142" class="ed" marker-end="url(#m4)"/>
+            <text x="570" y="136" text-anchor="middle" class="t-sub">chat request</text>
+            <line x1="670" y1="172" x2="472" y2="172" class="ed dash" marker-end="url(#m4)"/>
+            <text x="570" y="166" text-anchor="middle" class="t-sub t-mono">tool_call resetPassword</text>
+            <line x1="470" y1="202" x2="272" y2="202" class="ed-acc dash" marker-end="url(#m4a)"/>
+            <text x="370" y="196" text-anchor="middle" class="t-sub t-acc">ApprovalRequiredException</text>
+            <rect x="282" y="214" width="176" height="26" rx="5" class="nd-note"/>
+            <text x="370" y="231" text-anchor="middle" class="t-sub">parks prompt + tool call</text>
+            <line x1="270" y1="262" x2="82" y2="262" class="ed dash" marker-end="url(#m4)"/>
+            <text x="175" y="256" text-anchor="middle" class="t-sub">202 + approvalId</text>
+
+            <line x1="860" y1="298" x2="272" y2="298" class="ed-acc" marker-end="url(#m4a)"/>
+            <text x="565" y="292" text-anchor="middle" class="t-sub t-acc">approve</text>
+            <rect x="282" y="310" width="176" height="26" rx="5" class="nd-note"/>
+            <text x="370" y="327" text-anchor="middle" class="t-sub">runs resetPassword · audit</text>
+            <line x1="270" y1="360" x2="468" y2="360" class="ed" marker-end="url(#m4)"/>
+            <text x="370" y="354" text-anchor="middle" class="t-sub">history + tool result</text>
+            <line x1="470" y1="390" x2="668" y2="390" class="ed" marker-end="url(#m4)"/>
+            <text x="570" y="384" text-anchor="middle" class="t-sub">chat request</text>
+            <line x1="670" y1="420" x2="272" y2="420" class="ed dash" marker-end="url(#m4)"/>
+            <text x="570" y="414" text-anchor="middle" class="t-sub">final answer</text>
+            <line x1="270" y1="450" x2="82" y2="450" class="ed dash" marker-end="url(#m4)"/>
+            <text x="175" y="444" text-anchor="middle" class="t-sub">200 + reply + tool trace</text>
+          </svg>
+        </div>
+        <figcaption>The pause is an exception that carries the whole conversation. Nothing changes in the database until the human decides, and the approved call is executed by the application, not re-requested from the model.</figcaption>
+      </figure>
+
+      <h3>Behind the scenes</h3>
+      <ol class="steps">
+        <li><span><code>HelpdeskTools</code> methods carry <code>@Tool(description = …)</code> and <code>@ToolParam</code>. Spring AI reads them by reflection and builds a JSON schema for each tool; <code>.tools(helpdeskTools)</code> attaches them to the request. The descriptions are written for the model, because they're how it decides which tool to use.</span></li>
+        <li><span>In Spring AI 2 the tool loop lives in <code>ToolCallingAdvisor</code>. It calls the model; if the reply contains tool calls, it hands them to a <code>ToolCallingManager</code>, appends the assistant's tool-call message and a <code>ToolResponseMessage</code> to the history, and calls the model again.</span></li>
+        <li><span>The agent registers its own <code>ToolCallingAdvisor</code> built with <code>ApprovalGatingToolCallingManager</code>, a decorator around the real manager. Safe tools (<code>lookupEmployee</code>, <code>listAssets</code>, <code>createTicket</code>) run immediately, and each call is recorded in a <code>ToolTrace</code> for the UI.</span></li>
+        <li><span>If the model asks for a method annotated <code>@RequiresApproval</code> (<code>resetPassword</code>, <code>assignLoanerLaptop</code>), the gate throws <code>ApprovalRequiredException</code> holding the full <code>Prompt</code> and the model's tool-call message. <code>HelpdeskAgent</code> catches it, stores it in <code>PendingApprovalStore</code> under a UUID, and the controller answers <b>202 Accepted</b>.</span></li>
+        <li><span><b>Approve:</b> the parked tool calls run through the real manager, so the reset happens now. The conversation, including the tool result, is sent through ChatClient again, and the model writes the final reply. <b>Reject:</b> the agent creates a tool result that says "REJECTED by a human approver … do not retry", so the model explains that the action wasn't done.</span></li>
+        <li><span>Every action and decision goes to the <code>audit_log</code> table and the <code>acme.approvals</code> counters. When a tool fails (an unknown username, say), Spring AI returns the error text to the model instead of failing the request, so the model can correct itself.</span></li>
+      </ol>
+      <h3>Design decisions and lessons</h3>
+      <ul class="notes">
+        <li>The gate works at the tool-execution boundary, so it applies no matter how the model phrases its plan. Nothing relies on the model choosing to ask for permission.</li>
+        <li>Small models take shortcuts, such as resetting a password without looking up the employee first. The tool trace makes that visible, and in production you would enforce such rules inside the tool itself.</li>
+        <li>The pending store lives in memory, so approvals are lost on restart (a demo shortcut). A real system would save the conversation as JSON in a table and notify approvers.</li>
+        <li>If one model reply mixes safe and sensitive calls, the whole batch waits for approval.</li>
+      </ul>
+      <h3>In the code</h3>
+      <ul class="files"><li><code>helpdesk/HelpdeskTools.java</code></li><li><code>helpdesk/ApprovalGatingToolCallingManager.java</code></li><li><code>helpdesk/HelpdeskAgent.java</code></li><li><code>helpdesk/PendingApprovalStore.java</code></li><li><code>db/migration/V2__helpdesk_seed.sql</code></li></ul>
+    </section>
+
+    <!-- ===================================================================== 5 -->
+    <section class="topic" id="s5">
+      <div class="topic-head"><span class="topic-num">05</span><h2>Agentic workflow patterns</h2>
+        <p class="usecase">Five patterns from Anthropic's "Building effective agents", each on an Acme use case. <a class="try" href="/#agents">Open demo 5 →</a></p></div>
+
+      <h3>The idea</h3>
+      <p>Anthropic separates <b>workflows</b>, where your code decides the sequence of LLM calls, from <b>agents</b>, where the model decides its own steps and tools (demo 4). Most production value comes from simple, composable workflows: they're predictable, testable and cheaper. Each pattern trades extra latency or cost for better quality or capability. All five here are plain <code>ChatClient</code> calls in ordinary Java, with no agent framework.</p>
+
+      <div class="patterns">
+        <div class="pattern">
+          <h4>Chain</h4>
+          <span class="meta">4 sequential calls</span>
+          <svg viewBox="0 0 300 116" class="dg" style="min-width:0" role="img" aria-label="Four steps in a row, each feeding the next.">
+            <defs><marker id="p1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk"/></marker></defs>
+            <rect x="6" y="40" width="56" height="36" rx="6" class="nd"/><text x="34" y="62" text-anchor="middle" class="t-sub">features</text>
+            <rect x="80" y="40" width="56" height="36" rx="6" class="nd"/><text x="108" y="62" text-anchor="middle" class="t-sub">draft</text>
+            <rect x="154" y="40" width="56" height="36" rx="6" class="nd"/><text x="182" y="62" text-anchor="middle" class="t-sub">voice</text>
+            <rect x="228" y="40" width="66" height="36" rx="6" class="nd-acc"/><text x="261" y="62" text-anchor="middle" class="t-sub">final copy</text>
+            <line x1="62" y1="58" x2="78" y2="58" class="ed" marker-end="url(#p1)"/>
+            <line x1="136" y1="58" x2="152" y2="58" class="ed" marker-end="url(#p1)"/>
+            <line x1="210" y1="58" x2="226" y2="58" class="ed" marker-end="url(#p1)"/>
+            <text x="150" y="104" text-anchor="middle" class="t-sub">output of step n = input of step n+1</text>
+          </svg>
+          <p>Marketing copy from raw product notes. Each prompt does one small job, which is easier for a small model to get right than one big prompt. You can add code checks ("gates") between steps.</p>
+        </div>
+
+        <div class="pattern">
+          <h4>Routing</h4>
+          <span class="meta">1 classify + 1 specialist</span>
+          <svg viewBox="0 0 300 116" class="dg" style="min-width:0" role="img" aria-label="A classifier sends the email to one of three specialist prompts.">
+            <defs>
+              <marker id="p2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk"/></marker>
+              <marker id="p2a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk-acc"/></marker>
+            </defs>
+            <rect x="8" y="40" width="80" height="36" rx="6" class="nd-acc"/><text x="48" y="62" text-anchor="middle" class="t-sub">classify</text>
+            <rect x="196" y="6" width="96" height="28" rx="6" class="nd"/><text x="244" y="24" text-anchor="middle" class="t-sub">billing</text>
+            <rect x="196" y="44" width="96" height="28" rx="6" class="nd-acc"/><text x="244" y="62" text-anchor="middle" class="t-sub">technical</text>
+            <rect x="196" y="82" width="96" height="28" rx="6" class="nd"/><text x="244" y="100" text-anchor="middle" class="t-sub">account</text>
+            <line x1="88" y1="52" x2="194" y2="22" class="ed dash" marker-end="url(#p2)"/>
+            <line x1="88" y1="58" x2="194" y2="58" class="ed-acc" marker-end="url(#p2a)"/>
+            <line x1="88" y1="64" x2="194" y2="94" class="ed dash" marker-end="url(#p2)"/>
+          </svg>
+          <p>Support-inbox triage. The classifier returns <code>RouteDecision(reason, route)</code> as structured output, then a prompt written for that category replies. Each specialist prompt can be tuned on its own, and easy categories can go to a cheaper model.</p>
+        </div>
+
+        <div class="pattern">
+          <h4>Parallelization</h4>
+          <span class="meta">4 concurrent calls</span>
+          <svg viewBox="0 0 300 116" class="dg" style="min-width:0" role="img" aria-label="One input fans out to four concurrent analyses that are joined.">
+            <defs><marker id="p3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk"/></marker></defs>
+            <rect x="6" y="44" width="52" height="28" rx="6" class="nd"/><text x="32" y="62" text-anchor="middle" class="t-sub">input</text>
+            <rect x="104" y="4" width="96" height="22" rx="5" class="nd-acc"/><text x="152" y="19" text-anchor="middle" class="t-sub">customers</text>
+            <rect x="104" y="33" width="96" height="22" rx="5" class="nd-acc"/><text x="152" y="48" text-anchor="middle" class="t-sub">employees</text>
+            <rect x="104" y="62" width="96" height="22" rx="5" class="nd-acc"/><text x="152" y="77" text-anchor="middle" class="t-sub">investors</text>
+            <rect x="104" y="91" width="96" height="22" rx="5" class="nd-acc"/><text x="152" y="106" text-anchor="middle" class="t-sub">regulators</text>
+            <rect x="246" y="44" width="48" height="28" rx="6" class="nd"/><text x="270" y="62" text-anchor="middle" class="t-sub">join</text>
+            <line x1="58" y1="58" x2="102" y2="15" class="ed" marker-end="url(#p3)"/>
+            <line x1="58" y1="58" x2="102" y2="44" class="ed" marker-end="url(#p3)"/>
+            <line x1="58" y1="58" x2="102" y2="73" class="ed" marker-end="url(#p3)"/>
+            <line x1="58" y1="58" x2="102" y2="102" class="ed" marker-end="url(#p3)"/>
+            <line x1="200" y1="15" x2="244" y2="56" class="ed" marker-end="url(#p3)"/>
+            <line x1="200" y1="44" x2="244" y2="57" class="ed" marker-end="url(#p3)"/>
+            <line x1="200" y1="73" x2="244" y2="59" class="ed" marker-end="url(#p3)"/>
+            <line x1="200" y1="102" x2="244" y2="60" class="ed" marker-end="url(#p3)"/>
+          </svg>
+          <p>Impact of a price increase on four stakeholder groups. The calls run on <b>virtual threads</b>, and LM Studio serves four requests at once, so the wall time is about the slowest call (9.5 s) instead of the sum (36 s). A variant called "voting" sends the same prompt N times and combines the answers.</p>
+        </div>
+
+        <div class="pattern">
+          <h4>Orchestrator-workers</h4>
+          <span class="meta">1 plan + 2–4 workers</span>
+          <svg viewBox="0 0 300 116" class="dg" style="min-width:0" role="img" aria-label="An orchestrator plans tasks at runtime; workers run them; outputs are collected.">
+            <defs><marker id="p4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk"/></marker></defs>
+            <rect x="6" y="42" width="62" height="32" rx="6" class="nd-acc"/><text x="37" y="62" text-anchor="middle" class="t-sub">plan</text>
+            <rect x="116" y="8" width="106" height="26" rx="5" class="nd"/><text x="169" y="25" text-anchor="middle" class="t-sub">blog intro</text>
+            <rect x="116" y="45" width="106" height="26" rx="5" class="nd"/><text x="169" y="62" text-anchor="middle" class="t-sub">LinkedIn post</text>
+            <rect x="116" y="82" width="106" height="26" rx="5" class="nd"/><text x="169" y="99" text-anchor="middle" class="t-sub">customer email</text>
+            <rect x="250" y="44" width="46" height="28" rx="6" class="nd"/><text x="273" y="62" text-anchor="middle" class="t-sub">collect</text>
+            <line x1="68" y1="58" x2="114" y2="21" class="ed dash" marker-end="url(#p4)"/>
+            <line x1="68" y1="58" x2="114" y2="58" class="ed dash" marker-end="url(#p4)"/>
+            <line x1="68" y1="58" x2="114" y2="95" class="ed dash" marker-end="url(#p4)"/>
+            <line x1="222" y1="21" x2="248" y2="55" class="ed" marker-end="url(#p4)"/>
+            <line x1="222" y1="58" x2="248" y2="58" class="ed" marker-end="url(#p4)"/>
+            <line x1="222" y1="95" x2="248" y2="61" class="ed" marker-end="url(#p4)"/>
+          </svg>
+          <p>A launch content kit. Unlike parallelization, the subtasks aren't known in advance: the orchestrator returns <code>Plan(analysis, tasks[])</code> as structured output, and a worker call is made for each task. The dashed edges are decided at runtime.</p>
+        </div>
+
+        <div class="pattern">
+          <h4>Evaluator-optimizer</h4>
+          <span class="meta">2 calls per round, max 3 rounds</span>
+          <svg viewBox="0 0 300 116" class="dg" style="min-width:0" role="img" aria-label="Generator and evaluator loop with feedback until PASS or the round limit.">
+            <defs>
+              <marker id="p5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk"/></marker>
+              <marker id="p5a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk-acc"/></marker>
+            </defs>
+            <rect x="30" y="36" width="96" height="40" rx="6" class="nd"/><text x="78" y="60" text-anchor="middle" class="t-sub">generate</text>
+            <rect x="176" y="36" width="96" height="40" rx="6" class="nd-acc"/><text x="224" y="60" text-anchor="middle" class="t-sub">evaluate</text>
+            <line x1="126" y1="48" x2="174" y2="48" class="ed" marker-end="url(#p5)"/>
+            <text x="151" y="40" text-anchor="middle" class="t-sub">code</text>
+            <line x1="176" y1="66" x2="128" y2="66" class="ed-acc" marker-end="url(#p5a)"/>
+            <text x="151" y="88" text-anchor="middle" class="t-sub t-acc">feedback</text>
+            <line x1="224" y1="76" x2="224" y2="96" class="ed" marker-end="url(#p5)"/>
+            <text x="224" y="110" text-anchor="middle" class="t-sub">stop: PASS or 3 rounds</text>
+          </svg>
+          <p>Java code with an automated reviewer. This pattern works when the evaluation criteria are clear. The round cap is essential: a strict 4B reviewer often never says PASS, and without a cap the loop would never end.</p>
+        </div>
+      </div>
+
+      <h3>Behind the scenes</h3>
+      <ul class="notes">
+        <li><b>Structured decisions.</b> Routing, orchestration and evaluation return Java records through <code>.entity(…, spec -&gt; spec.useProviderStructuredOutput())</code>, so the decision is typed data, not text to parse (see demo 6).</li>
+        <li><b>Field order and wording matter.</b> With native structured output the model sees the field <i>names</i> but not their descriptions. At first <code>reason</code> came back as just "BILLING". Describing each field in the system prompt, and putting <code>reason</code> and <code>feedback</code> <i>before</i> the verdict so the model explains first, fixed it.</li>
+        <li><b>Tracing across threads.</b> Parallel calls run on <code>Executors.newVirtualThreadPerTaskExecutor()</code> wrapped in Micrometer's <code>ContextExecutorService</code>, so each model call stays a child span of the HTTP request in Grafana.</li>
+        <li><b>Visible steps.</b> Every workflow returns its intermediate steps with timings (<code>AgentStep</code>), so the UI shows the pattern working instead of just the end result.</li>
+      </ul>
+      <h3>In the code</h3>
+      <ul class="files"><li><code>agents/ChainWorkflow.java</code></li><li><code>agents/RoutingWorkflow.java</code></li><li><code>agents/ParallelizationWorkflow.java</code></li><li><code>agents/OrchestratorWorkersWorkflow.java</code></li><li><code>agents/EvaluatorOptimizerWorkflow.java</code></li><li><code>agents/TracedExecutors.java</code></li></ul>
+    </section>
+
+    <!-- ===================================================================== 6 -->
+    <section class="topic" id="s6">
+      <div class="topic-head"><span class="topic-num">06</span><h2>Structured extraction</h2>
+        <p class="usecase">Use cases: accounts-payable invoice processing, and meeting notes turned into action items. <a class="try" href="/#extraction">Open demo 6 →</a></p></div>
+
+      <h3>The idea</h3>
+      <p>Back-office automation needs typed data that a system can act on, not prose. There are three levels of getting JSON from an LLM:</p>
+      <ul class="notes">
+        <li><b>Asking in the prompt.</b> Fragile: the model may add chatter or markdown fences.</li>
+        <li><b>JSON mode.</b> Guarantees valid JSON, but not its shape.</li>
+        <li><b>Schema-constrained decoding</b> ("structured outputs"). The inference engine only allows tokens that keep the output valid against your JSON schema.</li>
+      </ul>
+      <p>Even a perfect schema can say "<code>total</code> is a number" but not "total = subtotal + tax", so <b>validation</b> stays in your code. Clean documents flow straight through, and exceptions go to a person.</p>
+
+      <figure>
+        <div class="fig-scroll">
+          <svg class="dg" viewBox="0 0 960 225" role="img" aria-label="Extraction pipeline: Java record, JSON schema, response_format, grammar-constrained decoding, Jackson, Bean Validation. Valid results pass; violations trigger a retry; the same violations twice route to human review.">
+            <defs>
+              <marker id="m6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk"/></marker>
+              <marker id="m6a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk-acc"/></marker>
+              <marker id="m6w" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk-warn"/></marker>
+            </defs>
+            <rect x="13" y="30" width="118" height="56" rx="7" class="nd"/>
+            <text x="72" y="54" text-anchor="middle" class="t-b">Java record</text>
+            <text x="72" y="70" text-anchor="middle" class="t-sub t-mono">Invoice.class</text>
+            <rect x="149" y="30" width="118" height="56" rx="7" class="nd"/>
+            <text x="208" y="54" text-anchor="middle" class="t-b">JSON schema</text>
+            <text x="208" y="70" text-anchor="middle" class="t-sub">BeanOutputConverter</text>
+            <rect x="285" y="30" width="118" height="56" rx="7" class="nd"/>
+            <text x="344" y="54" text-anchor="middle" class="t-b t-mono">response_format</text>
+            <text x="344" y="70" text-anchor="middle" class="t-sub">json_schema</text>
+            <rect x="421" y="30" width="118" height="56" rx="7" class="nd-llm"/>
+            <text x="480" y="54" text-anchor="middle" class="t-b">LM Studio</text>
+            <text x="480" y="70" text-anchor="middle" class="t-sub">grammar-constrained</text>
+            <rect x="557" y="30" width="118" height="56" rx="7" class="nd"/>
+            <text x="616" y="54" text-anchor="middle" class="t-b">Jackson</text>
+            <text x="616" y="70" text-anchor="middle" class="t-sub">JSON → record</text>
+            <rect x="693" y="30" width="118" height="56" rx="7" class="nd"/>
+            <text x="752" y="54" text-anchor="middle" class="t-b">Bean Validation</text>
+            <text x="752" y="70" text-anchor="middle" class="t-sub t-mono">@TotalsMatch</text>
+            <rect x="829" y="30" width="118" height="56" rx="7" class="nd-acc"/>
+            <text x="888" y="54" text-anchor="middle" class="t-b">Valid</text>
+            <text x="888" y="70" text-anchor="middle" class="t-sub">straight through</text>
+            <line x1="131" y1="58" x2="147" y2="58" class="ed" marker-end="url(#m6)"/>
+            <line x1="267" y1="58" x2="283" y2="58" class="ed" marker-end="url(#m6)"/>
+            <line x1="403" y1="58" x2="419" y2="58" class="ed" marker-end="url(#m6)"/>
+            <line x1="539" y1="58" x2="555" y2="58" class="ed" marker-end="url(#m6)"/>
+            <line x1="675" y1="58" x2="691" y2="58" class="ed" marker-end="url(#m6)"/>
+            <line x1="811" y1="58" x2="827" y2="58" class="ed" marker-end="url(#m6)"/>
+            <path d="M716,86 V190 H344 V90" class="ed-acc dash" marker-end="url(#m6a)"/>
+            <text x="530" y="208" text-anchor="middle" class="t-sub t-acc">violations appended to the prompt → ask again (max 2 retries)</text>
+            <rect x="829" y="128" width="118" height="46" rx="7" class="nd-warn"/>
+            <text x="888" y="148" text-anchor="middle" class="t-b">needsReview</text>
+            <text x="888" y="163" text-anchor="middle" class="t-sub">human queue</text>
+            <path d="M786,86 V151 H827" class="ed-warn" marker-end="url(#m6w)"/>
+            <text x="888" y="196" text-anchor="middle" class="t-sub t-warn">same violations twice</text>
+          </svg>
+        </div>
+        <figcaption>Shape is guaranteed by the decoder; meaning is checked in Java. When a retry returns exactly the same violations, the model has re-read the document and confirmed its values, so the document itself is wrong and it goes to a person.</figcaption>
+      </figure>
+
+      <h3>Behind the scenes</h3>
+      <ol class="steps">
+        <li><span><code>.entity(Invoice.class, spec -&gt; spec.useProviderStructuredOutput())</code> makes Spring AI's <code>BeanOutputConverter</code> generate a JSON schema from the record: field types, required fields, and <code>@JsonPropertyDescription</code> texts.</span></li>
+        <li><span>Because of <code>useProviderStructuredOutput()</code>, the schema goes into the request as <code>response_format: {type: "json_schema"}</code> instead of as instructions inside the prompt text.</span></li>
+        <li><span>LM Studio (llama.cpp underneath) compiles the schema into a grammar and, at every step, masks out tokens that would break it. The reply is always parseable JSON with the right shape, with no markdown fences and no chatter. OpenAI's structured outputs work the same way, so this also carries over to hosted models.</span></li>
+        <li><span>Jackson maps the JSON into the record, including <code>BigDecimal</code> amounts and <code>LocalDate</code> dates.</span></li>
+        <li><span>Jakarta Bean Validation runs field rules (<code>@NotBlank</code>, a currency <code>@Pattern("[A-Z]{3}")</code>, <code>@Positive</code>, nested <code>List&lt;@Valid LineItem&gt;</code>) and the class-level <code>@TotalsMatch</code> constraint: line items must add up to the subtotal and subtotal + tax to the total, within one cent.</span></li>
+        <li><span>Violations go back to the model as a re-check request. Identical violations twice means the source is inconsistent: the result is returned with <code>needsReview=true</code> and the exact rule that failed, for example <code>subtotal 1279.0 + tax 0.0 = 1279.0 but total is 1379.0</code>.</span></li>
+      </ol>
+      <h3>Design decisions and lessons</h3>
+      <ul class="notes">
+        <li>LLMs are unreliable at arithmetic. The model is told to copy values exactly as printed, and the validator does the math. Letting the model "fix" totals would hide real billing errors.</li>
+        <li>Stopping early on repeated violations cut the inconsistent-invoice case from three attempts (about 60 s) to two.</li>
+        <li>Instructions that matter belong in the system prompt, because in native mode the model doesn't see the schema's descriptions. That's how German formats (<code>1.504,80</code>, <code>02.10.2026</code>) get normalized correctly.</li>
+        <li>Relative dates ("next Wednesday") are hard for a 4B model even with explicit rules. A production version would resolve them in code from the meeting date.</li>
+      </ul>
+      <h3>In the code</h3>
+      <ul class="files"><li><code>extraction/ExtractionService.java</code></li><li><code>extraction/Invoice.java</code></li><li><code>extraction/TotalsMatch.java</code></li><li><code>extraction/MeetingNotes.java</code></li></ul>
+    </section>
+
+    <!-- ===================================================================== 7 -->
+    <section class="topic" id="s7">
+      <div class="topic-head"><span class="topic-num">07</span><h2>Model Context Protocol</h2>
+        <p class="usecase">Use case: Acme Travel Desk, an internal tool server that any AI client can use. <a class="try" href="/#mcp">Open demo 7 →</a></p></div>
+
+      <h3>The idea</h3>
+      <p><b>MCP</b> is an open protocol, introduced by Anthropic in November 2024 and now supported across the industry, that standardizes how AI applications connect to tools and data. You build a tool server once, and Claude Desktop, Claude Code, IDE assistants and your own Spring app can all use it. That turns N×M custom integrations into N+M.</p>
+      <ul class="notes">
+        <li><b>Tools</b> are actions the <i>model</i> chooses to call.</li>
+        <li><b>Resources</b> are data the <i>application</i> reads and attaches as context.</li>
+        <li><b>Prompts</b> are reusable templates a <i>user</i> picks.</li>
+        <li>Messages are <b>JSON-RPC 2.0</b>, carried over <b>stdio</b> (a local subprocess) or <b>Streamable HTTP</b> (one endpoint; the client POSTs JSON-RPC and the server answers with JSON or an event stream).</li>
+      </ul>
+
+      <figure>
+        <div class="fig-scroll">
+          <svg class="dg" viewBox="0 0 960 350" role="img" aria-label="ai-app's MCP client talks JSON-RPC over HTTP to mcp-server, which exposes three tools, one resource and one prompt; discovered tools feed the ChatClient tool loop; Claude Desktop and Claude Code can use the same server.">
+            <defs>
+              <marker id="m7" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk"/></marker>
+              <marker id="m7a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk-acc"/></marker>
+            </defs>
+            <rect x="20" y="40" width="280" height="242" rx="10" class="grp"/>
+            <text x="36" y="62" class="t-b">ai-app :8080 · MCP client</text>
+            <rect x="36" y="78" width="248" height="46" rx="7" class="nd"/>
+            <text x="160" y="98" text-anchor="middle" class="t-b">ChatClient tool loop</text>
+            <text x="160" y="114" text-anchor="middle" class="t-sub">same loop as demo 4</text>
+            <rect x="36" y="150" width="248" height="46" rx="7" class="nd"/>
+            <text x="160" y="170" text-anchor="middle" class="t-b t-mono">SyncMcpToolCallbackProvider</text>
+            <text x="160" y="186" text-anchor="middle" class="t-sub">MCP tools → ToolCallbacks</text>
+            <rect x="36" y="222" width="248" height="46" rx="7" class="nd-acc"/>
+            <text x="160" y="242" text-anchor="middle" class="t-b t-mono">McpSyncClient</text>
+            <text x="160" y="258" text-anchor="middle" class="t-sub">lazy initialize</text>
+            <line x1="160" y1="150" x2="160" y2="126" class="ed" marker-end="url(#m7)"/>
+            <text x="168" y="142" class="t-sub">callbacks</text>
+            <line x1="160" y1="222" x2="160" y2="198" class="ed" marker-end="url(#m7)"/>
+            <text x="168" y="214" class="t-sub">tool list</text>
+
+            <rect x="390" y="78" width="180" height="46" rx="7" class="nd-llm"/>
+            <text x="480" y="98" text-anchor="middle" class="t-b">LLM</text>
+            <text x="480" y="114" text-anchor="middle" class="t-sub">picks a tool</text>
+            <line x1="284" y1="92" x2="388" y2="92" class="ed" marker-end="url(#m7)"/>
+            <text x="336" y="86" text-anchor="middle" class="t-sub">tool schemas</text>
+            <line x1="390" y1="110" x2="286" y2="110" class="ed dash" marker-end="url(#m7)"/>
+            <text x="336" y="126" text-anchor="middle" class="t-sub t-mono">tool_calls</text>
+
+            <text x="480" y="160" text-anchor="middle" class="t-cap">JSON-RPC 2.0 METHODS</text>
+            <text x="480" y="180" text-anchor="middle" class="t-sub t-mono">initialize · capabilities</text>
+            <text x="480" y="196" text-anchor="middle" class="t-sub t-mono">tools/list</text>
+            <text x="480" y="212" text-anchor="middle" class="t-sub t-mono">tools/call {name, arguments}</text>
+            <text x="480" y="228" text-anchor="middle" class="t-sub t-mono">prompts/get · resources/read</text>
+            <line x1="286" y1="248" x2="674" y2="248" class="ed-acc" marker-start="url(#m7a)" marker-end="url(#m7a)"/>
+            <text x="480" y="268" text-anchor="middle" class="t-sub t-acc">HTTP POST /mcp (Streamable HTTP)</text>
+
+            <rect x="660" y="40" width="280" height="242" rx="10" class="grp"/>
+            <text x="676" y="62" class="t-b">mcp-server :8081 · Travel Desk</text>
+            <rect x="676" y="78" width="248" height="62" rx="7" class="nd"/>
+            <text x="800" y="98" text-anchor="middle" class="t-b t-mono">@McpTool ×3</text>
+            <text x="800" y="114" text-anchor="middle" class="t-sub">convert_currency · world_time</text>
+            <text x="800" y="129" text-anchor="middle" class="t-sub">public_holidays</text>
+            <rect x="676" y="150" width="248" height="46" rx="7" class="nd"/>
+            <text x="800" y="170" text-anchor="middle" class="t-b t-mono">@McpResource</text>
+            <text x="800" y="186" text-anchor="middle" class="t-sub t-mono">travel://fx-rates</text>
+            <rect x="676" y="222" width="248" height="46" rx="7" class="nd"/>
+            <text x="800" y="242" text-anchor="middle" class="t-b t-mono">@McpPrompt</text>
+            <text x="800" y="258" text-anchor="middle" class="t-sub t-mono">trip-briefing</text>
+
+            <rect x="676" y="306" width="248" height="36" rx="7" class="nd"/>
+            <text x="800" y="329" text-anchor="middle" class="t-b">Claude Desktop / Claude Code</text>
+            <line x1="800" y1="306" x2="800" y2="284" class="ed" marker-end="url(#m7)"/>
+            <text x="810" y="299" class="t-sub">same protocol</text>
+          </svg>
+        </div>
+        <figcaption>The model never talks to the MCP server directly. It sees MCP tools as ordinary tool schemas, and when it calls one, the app's callback forwards the call as <code>tools/call</code> to the server process.</figcaption>
+      </figure>
+
+      <h3>Behind the scenes · server</h3>
+      <ol class="steps">
+        <li><span>At startup Spring AI's annotation scanner finds the <code>@McpTool</code>, <code>@McpResource</code> and <code>@McpPrompt</code> methods on <code>TravelDeskTools</code> and registers them (the log says "Registered tools: 3, resources: 1, prompts: 1"). Tool input schemas come from the method parameters and <code>@McpToolParam</code>.</span></li>
+        <li><span><code>spring-ai-starter-mcp-server-webmvc</code> exposes the Streamable HTTP endpoint at <code>/mcp</code>. Tools also declare hints such as <code>readOnlyHint</code>, which clients can use to decide what needs confirmation.</span></li>
+      </ol>
+      <h3>Behind the scenes · client</h3>
+      <ol class="steps">
+        <li><span><code>spring-ai-starter-mcp-client</code> creates an <code>McpSyncClient</code> for the <code>travel-desk</code> connection in <code>application.yml</code>. With <code>initialized: false</code> the <code>initialize</code> handshake (protocol version and capabilities) waits until first use, so ai-app starts even when the server is down.</span></li>
+        <li><span>On a question, <code>SyncMcpToolCallbackProvider</code> calls <code>tools/list</code> and wraps each MCP tool as a Spring AI <code>ToolCallback</code>. The list is cached and refreshed when the server announces that its tools changed.</span></li>
+        <li><span>The callbacks join the normal tool loop from demo 4. When the model calls <code>convert_currency</code>, the callback sends <code>tools/call</code> over HTTP, and the server's JSON result goes back to the model as the tool result. <code>TracingToolCallback</code> records each call for the UI as mode <code>mcp</code>.</span></li>
+        <li><span>The trip briefing calls <code>prompts/get</code> with <code>{city, date, budget}</code>. The server renders its template, and the app runs the text with the tools. The FX panel calls <code>resources/read travel://fx-rates</code>.</span></li>
+        <li><span>If the server is unreachable, the failure becomes a 503 problem detail with a hint to start <code>mcp-server</code>. The rest of the app keeps working.</span></li>
+      </ol>
+      <h3>Design decisions and lessons</h3>
+      <ul class="notes">
+        <li>An MCP server is a trust boundary. Tool descriptions and tool results come from another system and can carry injected instructions ("tool poisoning"). Treat them as untrusted input.</li>
+        <li>Remote MCP servers need authentication; the spec defines OAuth 2.1 for HTTP transports. The demo server has none and should only run locally.</li>
+        <li>For a model, MCP tools and local <code>@Tool</code> methods look the same. The difference is ownership and reuse: the travel team can update its server without redeploying ai-app.</li>
+      </ul>
+      <h3>In the code</h3>
+      <ul class="files"><li><code>mcp-server/…/TravelDeskTools.java</code></li><li><code>mcp-server/…/application.yml</code></li><li><code>ai-app/…/mcp/TravelAssistantService.java</code></li><li><code>support/TracingToolCallback.java</code></li></ul>
+    </section>
+
+    <!-- ===================================================================== 8 -->
+    <section class="topic" id="s8">
+      <div class="topic-head"><span class="topic-num">08</span><h2>Observability</h2>
+        <p class="usecase">Use case: AI operations. What does each feature cost in tokens, how slow is it, which tools run, and what do the guardrails block? <a class="try" href="/#observability">Open demo 8 →</a></p></div>
+
+      <h3>The idea</h3>
+      <p>LLM features fail differently from normal code: calls take seconds, every request costs tokens, the same input can produce different output, and one user request can fan out into many model, tool and database calls. You need cost and latency per feature, block and error rates, and <b>traces</b> that show each step of a single request. OpenTelemetry is the vendor-neutral standard for this, and its GenAI semantic conventions define the <code>gen_ai.*</code> attributes: model, operation, input and output tokens. Prompts and completions contain personal data, so recording them stays off unless you need to debug.</p>
+
+      <figure>
+        <div class="fig-scroll">
+          <svg class="dg" viewBox="0 0 960 230" role="img" aria-label="Observations in ai-app become meters and spans, are pushed over OTLP HTTP to the OTel collector in the LGTM container, stored in Prometheus, Tempo and Loki, and shown in Grafana.">
+            <defs><marker id="m8" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk"/></marker></defs>
+            <rect x="20" y="36" width="270" height="178" rx="10" class="grp"/>
+            <text x="36" y="58" class="t-b">ai-app</text>
+            <rect x="36" y="70" width="238" height="48" rx="7" class="nd-acc"/>
+            <text x="155" y="90" text-anchor="middle" class="t-b">Micrometer observations</text>
+            <text x="155" y="106" text-anchor="middle" class="t-sub">Spring AI + FeatureMetricsAdvisor</text>
+            <rect x="36" y="146" width="113" height="50" rx="7" class="nd"/>
+            <text x="92" y="167" text-anchor="middle" class="t-b">Meters</text>
+            <text x="92" y="183" text-anchor="middle" class="t-sub">timers · counters</text>
+            <rect x="161" y="146" width="113" height="50" rx="7" class="nd"/>
+            <text x="217" y="167" text-anchor="middle" class="t-b">Spans</text>
+            <text x="217" y="183" text-anchor="middle" class="t-sub">OTel bridge</text>
+            <line x1="100" y1="118" x2="96" y2="144" class="ed" marker-end="url(#m8)"/>
+            <line x1="210" y1="118" x2="214" y2="144" class="ed" marker-end="url(#m8)"/>
+
+            <line x1="290" y1="133" x2="394" y2="133" class="ed" marker-end="url(#m8)"/>
+            <text x="342" y="125" text-anchor="middle" class="t-sub">OTLP / HTTP</text>
+            <text x="342" y="149" text-anchor="middle" class="t-sub">push</text>
+
+            <rect x="380" y="36" width="330" height="178" rx="10" class="grp"/>
+            <text x="396" y="58" class="t-b t-mono">grafana/otel-lgtm</text>
+            <rect x="396" y="78" width="120" height="110" rx="7" class="nd"/>
+            <text x="456" y="129" text-anchor="middle" class="t-b">OTel Collector</text>
+            <text x="456" y="145" text-anchor="middle" class="t-sub">receives OTLP</text>
+            <rect x="560" y="72" width="134" height="34" rx="7" class="nd"/>
+            <text x="627" y="94" text-anchor="middle">Prometheus · metrics</text>
+            <rect x="560" y="116" width="134" height="34" rx="7" class="nd"/>
+            <text x="627" y="138" text-anchor="middle">Tempo · traces</text>
+            <rect x="560" y="160" width="134" height="34" rx="7" class="nd"/>
+            <text x="627" y="182" text-anchor="middle">Loki · logs</text>
+            <line x1="516" y1="128" x2="558" y2="89" class="ed" marker-end="url(#m8)"/>
+            <line x1="516" y1="133" x2="558" y2="133" class="ed" marker-end="url(#m8)"/>
+            <line x1="516" y1="138" x2="558" y2="177" class="ed" marker-end="url(#m8)"/>
+
+            <rect x="760" y="92" width="180" height="82" rx="7" class="nd-acc"/>
+            <text x="850" y="118" text-anchor="middle" class="t-b">Grafana :3000</text>
+            <text x="850" y="136" text-anchor="middle" class="t-sub">Acme AI Overview</text>
+            <text x="850" y="152" text-anchor="middle" class="t-sub">trace explorer</text>
+            <line x1="694" y1="89" x2="758" y2="124" class="ed" marker-end="url(#m8)"/>
+            <line x1="694" y1="133" x2="758" y2="133" class="ed" marker-end="url(#m8)"/>
+            <line x1="694" y1="177" x2="758" y2="142" class="ed" marker-end="url(#m8)"/>
+          </svg>
+        </div>
+        <figcaption>Spring Boot's Docker Compose support sees the <code>grafana/otel-lgtm</code> image in <code>compose.yaml</code> and fills in the OTLP endpoints itself, so no telemetry URL appears in the configuration.</figcaption>
+      </figure>
+
+      <h3>Behind the scenes</h3>
+      <ol class="steps">
+        <li><span>Micrometer's <b>Observation API</b> is one instrumentation point that produces both a timer metric and a trace span. Spring AI observes the whole ChatClient call (<code>spring.ai.chat.client</code>), each advisor (<code>spring.ai.advisor</code>), each model or embedding call (<code>gen_ai.client.operation</code> plus the <code>gen_ai.client.token.usage</code> counter), each tool execution (<code>spring.ai.tool</code>) and each vector-store query (<code>db.vector.client.operation</code>).</span></li>
+        <li><span><code>FeatureMetricsAdvisor</code> adds the business view: an <code>acme.ai.feature</code> observation tagged with <code>feature</code> and <code>outcome</code> (success, blocked, approval_pending, error), plus <code>acme.ai.tokens{feature, type}</code> counters filled from the response's <code>Usage</code>. Exceptions that implement <code>ExpectedOutcome</code> (a guardrail block, an approval pause) count as outcomes, not errors.</span></li>
+        <li><span><code>spring-boot-starter-opentelemetry</code> bridges observations into OpenTelemetry spans and pushes metrics every 10 s, both over OTLP/HTTP.</span></li>
+        <li><span>Inside <code>grafana/otel-lgtm</code>, one container runs an OTel Collector, Prometheus (metrics), Tempo (traces), Loki (logs) and Grafana. The "Acme AI Overview" dashboard is mounted through <code>compose.yaml</code> and loaded automatically.</span></li>
+      </ol>
+      <h3>A helpdesk request as a trace (simplified)</h3>
+<pre><code>http post /api/helpdesk/chat                                   <span class="c">4.2 s</span>
+└─ chat client                                    <span class="c">spring.ai.chat.client</span>
+   └─ acme helpdesk                feature=helpdesk outcome=success
+      └─ tool calling advisor
+         ├─ chat <span class="m">qwen3-4b</span>        → tool_calls: lookupEmployee     <span class="c">gen_ai.* tokens</span>
+         ├─ execute_tool lookupEmployee
+         ├─ chat <span class="m">qwen3-4b</span>        → tool_calls: listAssets
+         ├─ execute_tool listAssets
+         ├─ chat <span class="m">qwen3-4b</span>        → tool_calls: createTicket
+         ├─ execute_tool createTicket
+         └─ chat <span class="m">qwen3-4b</span>        → final answer</code></pre>
+      <h3>Design decisions and lessons</h3>
+      <ul class="notes">
+        <li>Prometheus' <code>increase()</code> can't see a counter's first value, so features used once per app run showed 0 tokens. All app counters are now registered at 0 when the app starts.</li>
+        <li>p95 latency needs histogram buckets, which Micrometer only publishes when asked (<code>management.metrics.distribution.percentiles-histogram</code>).</li>
+        <li>The UI polls the approvals list every 10 s. Those GETs flooded the trace list, so the dashboard shows POST requests only, and every AI call is a POST.</li>
+        <li>A sampling probability of 1.0 is right for a demo. Production systems sample, and keep prompt and completion logging off for PII.</li>
+      </ul>
+      <h3>In the code</h3>
+      <ul class="files"><li><code>observability/FeatureMetricsAdvisor.java</code></li><li><code>observability/ExpectedOutcome.java</code></li><li><code>ai-app/compose.yaml</code></li><li><code>observability/dashboards/acme-ai-overview.json</code></li><li><code>application.yml · management.*</code></li></ul>
+    </section>
+
+    <!-- ===================================================================== 9 -->
+    <section class="topic" id="s9">
+      <div class="topic-head"><span class="topic-num">09</span><h2>LLM evaluation as a quality gate</h2>
+        <p class="usecase">Use case: catch answer-quality regressions in CI before they ship. <a class="try" href="/#evaluation">Open demo 9 →</a></p></div>
+
+      <h3>The idea</h3>
+      <p>You can't <code>assertEquals</code> an LLM answer, yet every change to a prompt, model, chunk size or threshold can quietly make answers worse. <b>Evals</b> are the answer:</p>
+      <ul class="notes">
+        <li>A <b>golden dataset</b> of inputs with known-good expectations.</li>
+        <li><b>Deterministic checks</b> wherever possible: does the answer contain the fact, is it valid JSON, does it refuse correctly?</li>
+        <li><b>LLM-as-judge</b> for fuzzy properties such as relevance and groundedness (also called faithfulness).</li>
+      </ul>
+      <p>The result is a pass rate compared with a threshold, not a demand for 100%. Judges are models too, so make them deterministic, constrain what they may answer, and check their verdicts against cases where you know the truth.</p>
+
+      <h3>How each golden case is graded</h3>
+      <div class="tablewrap"><table>
+        <thead><tr><th>Check</th><th>How</th><th>Counts toward pass</th></tr></thead>
+        <tbody>
+          <tr><td>Expected facts</td><td>Deterministic: the answer must contain one alternative from each group, for example <code>["5", "five"]</code>.</td><td>yes</td></tr>
+          <tr><td>Relevant</td><td><code>RelevancyEvaluator</code> with a custom prompt: does the response answer the query and agree with the retrieved context? YES / NO.</td><td>yes</td></tr>
+          <tr><td>Grounded</td><td><code>FactCheckingEvaluator</code>: is the claim supported by the retrieved chunks? Paraphrases count.</td><td>yes</td></tr>
+          <tr><td>Refusal case</td><td>"What is the CEO's salary?" must produce the exact not-found sentence.</td><td>yes (that case only)</td></tr>
+          <tr><td>Cited the right source</td><td>Deterministic: does a chunk the answer cites as [n] contain the fact?</td><td>no, informational</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Behind the scenes</h3>
+      <ol class="steps">
+        <li><span><code>eval/rag-golden.json</code> holds 10 answerable questions with the facts they must mention, plus one question that must be refused.</span></li>
+        <li><span>Each case runs through the <i>real</i> RAG pipeline (<code>PolicyQaService.ask</code> with explicit top-k and threshold) and keeps the retrieved chunks as evidence.</span></li>
+        <li><span>The judge ChatClient runs at temperature 0 and carries <code>VerdictNormalizerAdvisor</code>. Spring AI's evaluators accept only an exact "yes", so the advisor turns replies like "Yes. The response…" into "yes".</span></li>
+        <li><span>The answer is cleaned of <code>[n]</code> markers and markdown before judging. A case that hits a transient model-server error is retried once and otherwise counts as failed instead of aborting the whole run.</span></li>
+        <li><span>The gate passes when the pass rate is at least <code>acme.evaluation.min-pass-rate</code> (0.8).</span></li>
+        <li><span>In CI, <code>RagQualityGateIT</code> is tagged <code>llm-eval</code>. The <code>-Pllm-eval</code> Maven profile switches Surefire and Failsafe to that tag, and Testcontainers provides a fresh pgvector database. Maven <code>-D</code> properties reach the test JVM, which is how the regression demo starves retrieval.</span></li>
+      </ol>
+
+      <h3>Real runs from building this project</h3>
+      <div class="tablewrap"><table>
+        <thead><tr><th>Run</th><th>Settings</th><th>Passed</th><th>Gate</th></tr></thead>
+        <tbody>
+          <tr><td>First judge version, graded against cited chunks only</td><td>top-k 4, ≥ 0.55</td><td class="num">8 / 11</td><td><span class="pill bad">failed</span></td></tr>
+          <tr><td>Judge graded against all retrieved chunks, temperature 0</td><td>top-k 4, ≥ 0.55</td><td class="num">9 / 11 · 10 / 11</td><td><span class="pill ok">passed</span></td></tr>
+          <tr><td>Plus a paraphrase rule and a custom relevancy prompt (<code>-Pllm-eval</code>)</td><td>top-k 4, ≥ 0.55</td><td class="num">11 / 11</td><td><span class="pill ok">passed</span></td></tr>
+          <tr><td>Regression demo: starved retrieval</td><td>top-k 1, ≥ 0.95</td><td class="num">1 / 11</td><td><span class="pill bad">failed the build</span></td></tr>
+        </tbody>
+      </table></div>
+      <div class="callout"><p>All 11 answers contained the right facts in every run. The early failures came from the judge. The 4B model often cited the wrong <code>[n]</code>, so the evaluator graded the answer against the wrong chunk, and it rejected correct paraphrases ("minimum 14" against "at least 14"). Validating the judge is part of building an eval.</p></div>
+      <h3>In the code</h3>
+      <ul class="files"><li><code>evaluation/RagEvaluationService.java</code></li><li><code>evaluation/VerdictNormalizerAdvisor.java</code></li><li><code>eval/rag-golden.json</code></li><li><code>test/…/RagQualityGateIT.java</code></li><li><code>pom.xml · llm-eval profile</code></li></ul>
+    </section>
+  </main>
+</div>
+<script>
+  // web fonts change the layout after load, so re-apply a deep link (#s3) once they are ready
+  if (location.hash && document.fonts) {
+    document.fonts.ready.then(() => document.getElementById(location.hash.slice(1))?.scrollIntoView());
+  }
+</script>
+</body>
+</html>

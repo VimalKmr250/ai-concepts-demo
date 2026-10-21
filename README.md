@@ -20,6 +20,7 @@ A runnable sample of the AI patterns enterprises are adopting now. It's built on
 | 9 | LLM evaluation | RAG quality gate in CI | Golden set, `RelevancyEvaluator`, `FactCheckingEvaluator`, JUnit gate (`-Pllm-eval`) |
 
 👉 **[DEMO.md](DEMO.md)** is the click-by-click demo script, with the result to expect for each demo.
+📖 **[docs/CONCEPTS.md](docs/CONCEPTS.md)** explains each concept and what happens behind the scenes on a request. The same guide is in the demo UI at http://localhost:8080/concepts.html, and each demo page links to its section.
 
 ## Architecture
 
@@ -126,7 +127,8 @@ ai-app/
     db/migration/               Flyway: chat memory, KB registry, helpdesk schema + seed
     demo/handbook/              fictional Acme handbook (5 Markdown files + 1 PDF)
     eval/rag-golden.json        golden question set for demo 9
-    static/                     UI (index.html, app.js, styles.css, samples.json)
+    static/                     UI (index.html, app.js, styles.css, samples.json) + concepts.html guide
+docs/CONCEPTS.md                concepts and behind-the-scenes walkthrough for every demo
 http/requests.http              every demo as an HTTP request
 DEMO.md                         demo script with expected results
 ```
